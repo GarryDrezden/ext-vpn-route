@@ -9,8 +9,28 @@ function show(id, value, tone) {
 
 function toneFor(status) {
   if (status === "APPLIED" || status === "COMPILED" || status === "AVAILABLE" || status === "CURRENT") return "ok";
-  if (status === "APPLYING" || status === "NOT_APPLIED" || status === "IDLE" || status === "PREVIOUS") return "warn";
+  if (status === "APPLYING" || status === "NOT_APPLIED" || status === "IDLE" || status === "PREVIOUS" ||
+    status === "LAST_KNOWN_GOOD" || status === "UNKNOWN") return "warn";
   return "bad";
+}
+
+function renderNative(source) {
+  byId("native-section").hidden = false;
+  byId("reapply").textContent = "Refresh state & apply";
+  show("native-host", source.hostName);
+  show("native-transport", source.transport, toneFor(source.transport));
+  show("native-protocol", source.protocolVersion);
+  show("native-service", source.service, toneFor(source.service));
+  const f = source.lastFetch;
+  show("native-last-fetch", f
+    ? f.result + (f.errorCode ? " (" + (f.hostErrorCode || f.errorCode) + ")" : "") + " at " + f.at
+    : "never", f ? (f.result === "OK" ? "ok" : "bad") : "warn");
+  show("native-fetched-revision", source.fetchedRevision);
+  const decision = source.lastDecision;
+  show("native-decision", decision ? decision.kind + (decision.message ? ": " + decision.message : "") : null,
+    decision && (decision.kind === "applied" || decision.kind === "unchanged") ? "ok" : decision ? "warn" : "");
+  const te = source.lastTransportError;
+  show("native-transport-error", te ? te.code + ": " + te.message + " (" + te.at + ")" : "none", te ? "bad" : "");
 }
 
 function render(response) {
@@ -24,6 +44,10 @@ function render(response) {
   show("proxy-api", d.proxyApi, toneFor(d.proxyApi));
   show("level-of-control", d.levelOfControl,
     d.levelOfControl === "controlled_by_this_extension" ? "ok" : d.levelOfControl === "controllable_by_this_extension" ? "warn" : "bad");
+
+  show("state-source", response.mode === "Fixture" ? "Fixture (" + response.fixture + ")" : response.mode);
+  show("protection", response.protection, toneFor(response.protection));
+  if (response.mode === "Native" && response.source) renderNative(response.source);
 
   show("fixture", response.fixture);
   const s = d.state || {};

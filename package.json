@@ -11,6 +11,9 @@
     "test": "node --test \"tests/**/*.test.js\"",
     "measure:pac": "node scripts/measure-pac.js",
     "build:extension": "node scripts/build-extension.js",
-    "build:extension:large": "node scripts/build-extension.js --fixture=large"
+    "build:extension:native": "node scripts/build-extension.js --mode=native",
+    "build:extension:large": "node scripts/build-extension.js --fixture=large",
+    "build:native-host": "node scripts/build-native-host.js",
+    "test:native-host": "dotnet test tests/native-host/SelectiveVpnRouter.NativeHost.Tests.csproj -c Release --nologo"
   }
 }

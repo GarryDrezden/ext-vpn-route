@@ -2,15 +2,18 @@
 
 ## Сейчас
 
-- Ветка: `main`
-- Checkpoint commit `01b9212` (Phase 0A–2). Phase 3 поверх него не закоммичен.
+- Ветка: `main`.
+- Checkpoint commits: `01b9212` (Phase 0A–2), `5aed8e5` (Phase 3). Phase 4 поверх них не закоммичен.
 - Phase 0A: **PASS** в Yandex Browser и Chrome.
 - Phase 0B: **PASS в Yandex Browser**. Chrome намеренно не тестировался.
 - Phase 1: **PASS, автоматические тесты** (доменный слой).
 - Phase 2: **PASS, автоматические тесты** (PAC compiler).
-- Phase 3: production MV3 extension. Автоматические тесты PASS, **ручная проверка в Yandex ожидается** (`docs/phase3-acceptance.md`).
-- `npm test`: 220 тестов, все PASS: 107 domain, 56 PAC, 57 extension.
-- `dist/extension` собран с normal fixture.
+- Phase 3: **FULL PASS в Yandex Browser** (production MV3 extension, fixture state).
+- Phase 4: production native state transport. **PASS, автоматические тесты**. Ручная проверка необязательна (`docs/phase4-acceptance.md`).
+- `npm test`: 330 тестов, все PASS: 107 domain, 56 PAC, 162 extension, 5 integration.
+- `npm run test:native-host`: 116 тестов xUnit, все PASS.
+- `dist/extension` собран как Fixture (normal). `dist/native-host` опубликован.
+- Production host и spike host **не зарегистрированы**.
 
 ## Phase 0A — PASS
 
@@ -119,14 +122,24 @@ PAC исполняется в `node:vm`. Обращение к DNS-функци�
 
 Lookup около 3 µs в vm Node и практически не зависит от числа правил.
 
-## Phase 3 — production extension runtime
+## Phase 3 — production extension runtime, FULL PASS в Yandex
 
-Код: `src/extension/`. Подробно: `docs/phase3-extension-runtime.md`. Проверка: `docs/phase3-acceptance.md`.
+Код: `src/extension/`. Подробно: `docs/phase3-extension-runtime.md`. Результаты и инструкция: `docs/phase3-acceptance.md`.
+
+Подтверждено в Yandex:
+
+- normal fixture `APPLIED` 3001 с read-back `data_match` (Yandex возвращает `pacScript.data`);
+- DIRECT для `example.com`, fail-closed для YouTube;
+- SOCKS5 `ATYP=DOMAIN`;
+- Clear / Reapply;
+- large PAC 382165 bytes `APPLIED` 3999 `data_match`.
+
+Перед проверкой production extension Phase 0 Spike должен быть выключен и не оставлять active PAC. Иначе после production Clear эффективным становится PAC spike.
 
 - Цепочка: fixture `state/smoke-state.js` (revision 3001; `youtube.com` и `googlevideo.com` → VPN, `example.com` ExactHost → Direct, по умолчанию Direct) → `compilePacScript` с endpoint из `runtime/config.js` (`127.0.0.1:17891`, Phase 0 logger) → `proxy.settings.set` с `mandatory: true` → read-back.
 - Production extension ID: `lfaekfalhkgmbfdjjlfcalanhijeaien`. Отличается от spike, приватный ключ не сохранён.
 - Permissions: `proxy`, `storage`.
-- Сборка: `npm run build:extension` собирает `dist/extension` (в `.gitignore`), раскладка повторяет `src/`. `npm run build:extension:large` — dev-only, 10000 правил, revision 3999, PAC ~382 KB.
+- Сборка: `npm run build:extension` собирает `dist/extension` (в `.gitignore`), раскладка повторяет `src/`. `npm run build:extension:large` — dev-only, 10000 правил, revision 3999, PAC 382165 bytes.
 - `runtime/proxy-controller.js` — state machine, chrome API передаются явно:
   - статусы: `IDLE`, `APPLYING`, `APPLIED`, `NOT_APPLIED`, `ERROR`, `CONFLICT`, `NOT_CONTROLLABLE`, `UNAVAILABLE`;
   - `active.pac`: `CURRENT`, `PREVIOUS`, `UNRECOGNIZED`, `NONE`, `UNKNOWN`.
@@ -145,13 +158,47 @@ Lookup около 3 µs в vm Node и практически не зависит
 
 Мутационная проверка: 13 внесённых ошибок в controller, adapter, worker и build ловятся.
 
+## Phase 4 — production native state transport
+
+Подробно: `docs/phase4-native-state-transport.md`. Протокол: `docs/native-messaging-protocol-v1.md`.
+
+Цепочка: Native build extension → `sendNativeMessage("com.vpnroute.browser", getState)` → `SelectiveVpnRouter.NativeHost.exe` → `IServiceStateClient`. Service не подключён: production-клиент `UnavailableServiceStateClient` всегда отвечает `service_unavailable`.
+
+- Host: `src/native-host/`, net10.0, без NuGet.
+  - Publish: `npm run build:native-host` → `dist/native-host/SelectiveVpnRouter.NativeHost.exe`, self-contained single file win-x64, 73 553 737 bytes, без trimming (trimmed — 12.5 MiB, отложено).
+  - Команды: `ping` и `getState`.
+  - Проверяет origin по argv и `--parent-window`.
+  - Лимиты: запрос 64 KiB, ответ 1 MiB.
+  - Stdout — только кадры, логи — в stderr.
+- Регистрация: `scripts/native-host/{register,unregister,status}.ps1`.
+  - Только HKCU Chrome-ключ, manifest в `dist/native-messaging/`.
+  - Origin ровно `chrome-extension://lfaekfalhkgmbfdjjlfcalanhijeaien/`.
+  - Ключи spike не трогаются.
+- Extension, режим фиксируется при сборке:
+  - `build:extension` / `:large` — Fixture, permissions `proxy` + `storage`;
+  - `build:extension:native` — Native, плюс `nativeMessaging`, без fixture-модуля.
+- `state/native-state-provider.js`:
+  - таймаут 5 s;
+  - строгий конверт, `requestId`, `protocolVersion`;
+  - state через Phase 1, endpoint через Phase 2.
+- `state/snapshot.js` — `BrowserRoutingSnapshot { state, proxyEndpoint }`.
+- `runtime/routing-coordinator.js` — revision policy:
+  - stale `<` applied отклоняется;
+  - `==` — unchanged без `set`;
+  - `>` — apply.
+- Fail-safe: при ошибке нет clear, DIRECT и fixture fallback, действует last-known-good. Routing protection: `CURRENT` / `LAST_KNOWN_GOOD` / `NOT_PROTECTED`.
+- Proxy controller Phase 3 расширен: `apply(reason, snapshot?)`, опциональный `loadState`, `read()`.
+- Storage: `vpnRouteDiagnostics` и `vpnRouteStateSource` (lineage + диагностика транспорта), правил нет.
+- Мутационная проверка: 27 внесённых ошибок ловятся (17 extension и build, 10 host).
+
 ## Файлы
 
 - `spike/` — Phase 0, в продукт не переносится: `extension/`, `socks5-logger/`, `native-host/`, `native-host-tests/`.
 - `src/domain/browser-routing/`, `tests/domain/browser-routing/` — Phase 1.
 - `src/pac/`, `tests/pac/`, `scripts/measure-pac.js` — Phase 2.
-- `src/extension/`, `tests/extension/`, `scripts/build-extension.js`, `scripts/large-fixture.js`, `scripts/extension-id.js` — Phase 3. `dist/` генерируется.
-- `docs/phase0-acceptance.md`, `docs/phase0b-acceptance.md`, `docs/browser-routing-contract-v1.md`, `docs/pac-compiler-v1.md`, `docs/phase3-extension-runtime.md`, `docs/phase3-acceptance.md`, `docs/examples/`.
+- `src/extension/`, `tests/extension/`, `scripts/build-extension.js`, `scripts/large-fixture.js`, `scripts/extension-id.js` — Phase 3–4. `dist/` генерируется.
+- `src/native-host/`, `tests/native-host/`, `tests/integration/`, `scripts/build-native-host.js`, `scripts/native-host/` — Phase 4.
+- `docs/phase0-acceptance.md`, `docs/phase0b-acceptance.md`, `docs/browser-routing-contract-v1.md`, `docs/pac-compiler-v1.md`, `docs/phase3-extension-runtime.md`, `docs/phase3-acceptance.md`, `docs/native-messaging-protocol-v1.md`, `docs/phase4-native-state-transport.md`, `docs/phase4-acceptance.md`, `docs/examples/`.
 
 ## Автоматические проверки
 
@@ -159,6 +206,10 @@ Lookup около 3 µs в vm Node и практически не зависит
 
 ```text
 npm test
+npm run test:native-host
+npm run build:extension:native
+npm run build:extension:large
+npm run build:native-host -- --tests
 npm run build:extension
 dotnet build spike\socks5-logger\Socks5Logger.csproj
 dotnet build spike\native-host\SelectiveVpnRouter.NativeHost.Spike.csproj -c Release
@@ -172,17 +223,21 @@ dotnet run --project spike\socks5-logger\Socks5Logger.csproj -- --self-test
 - IDNA зависит от реализации `URL` в runtime. Канонические ASCII-формы обычных доменов совпадают, но для экзотических Unicode-символов Node и конкретная версия Chromium теоретически могут разойтись. Контракт требует, чтобы по проводу ходил уже canonical ASCII.
 - Корректность Punycode в метках `xn--` проверяет `URL` парсер runtime, своего декодера нет.
 - Однометочные host и TLD-правила (`ru`) допустимы. Public Suffix List не применяется; выбор «домен целиком» для UI — задача будущего popup.
-- Production extension, а с ним доменный модуль и compiler в браузерном runtime, проверены только в Node: в Yandex проверка ожидается.
-- Production PAC пока исполнялся только в `node:vm`. Приём ~382 KB inline PAC и поведение `get()` с `data` в Yandex подтверждает acceptance F. Как Chromium передаёт IPv6 host, не проверено.
-- Состояние — фиксированный fixture, `scope: "regular"`, инкогнито не настраивается.
+- Как Chromium передаёт в PAC IPv6 host, не проверено.
+- `scope: "regular"`, инкогнито не настраивается.
 - Неклассифицируемый host идёт в VPN даже при `defaultRoute = Direct` (fail-closed).
-- Phase 0B проверен только `sendNativeMessage`; долгоживущий `connectNative` в браузере не проверялся.
+- Native: Service connector отсутствует, production `getState` всегда `service_unavailable`. Успешный путь проверен только с fake Service и fake host.
+- Production host в браузере не запускался; это необязательный `docs/phase4-acceptance.md`.
+- Лимит Chromium 1 MiB на ответ host: около 10000 правил в JSON не помещаются (`response_too_large`). Нужен компактный формат или разбиение.
+- Revision lineage без epoch: сброс ревизии на стороне Service приведёт к `stale_snapshot`. Выход — явный Clear.
+- Exe не подписан. Manifest указывает абсолютный путь в рабочую копию.
+- `connectNative` не используется и не проверялся.
 
 ## Архитектурные правила
 
 - VPN Route Service — единственный authoritative source of truth для правил.
-- Native host — тупой bridge, правил не хранит.
-- Extension владеет proxy/PAC в Chromium и получает состояние от Service.
+- Native host — тупой bridge: правил не хранит и не кэширует, файлы, реестр, сеть и процессы не трогает.
+- Extension владеет proxy/PAC в Chromium и получает состояние от Service. Правил в `chrome.storage` нет.
 - TabDock позже станет вторым клиентом того же контракта. Сейчас не трогается.
 - Обход localhost/private/link-local и маршрут для IP-литералов — forced-local policy PAC-компилятора, не matcher и не BrowserRoutingRule.
 - В модели нет fallback на DIRECT. VPN в PAC — только `SOCKS5 127.0.0.1:<port>` без `; DIRECT`.
@@ -190,5 +245,7 @@ dotnet run --project spike\socks5-logger\Socks5Logger.csproj -- --self-test
 
 ## Не начато
 
-- Phase 4 и дальше: состояние от Service через production Native Messaging (getState/upsert/delete), IPC с Service, ExplicitBrowserProxy, VPN-side DNS, UI правил, TabDock, Portable Bootstrap.
+- Service connector в host (named pipe к VPN Route Service) и `getState` на стороне Service.
+- `upsertRule` / `deleteRule`, UI правил, push-обновления (`connectNative`).
+- ExplicitBrowserProxy, VPN-side DNS, TabDock, Portable Bootstrap и установщик.
 - Изменения `Vpn-gateway`.

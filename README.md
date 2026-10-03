@@ -12,7 +12,7 @@
 - даёт выбрать маршрут за пару действий;
 - применяет политику прокси через `chrome.proxy` и PAC;
 - показывает, какой маршрут сейчас действует;
-- получает правила от desktop VPN Route по Native Messaging.
+- получает правила от desktop VPN Route по Native Messaging. При сбое оставляет последний применённый PAC и не переходит на DIRECT.
 
 Расширение не поднимает VPN, не меняет системную маршрутизацию и не хранит правила как источник истины.
 
@@ -24,11 +24,10 @@
 
 - явный SOCKS5 на loopback;
 - DNS для адресов, которые идут через VPN;
-- хранение правил;
-- Native Messaging Host;
-- регистрация host в portable-поставке.
+- хранение правил (VPN Route Service — единственный источник истины);
+- portable-поставка.
 
-Расширение только говорит с этим host. Host — мост без собственной бизнес-логики.
+Здесь лежит Native Messaging Host `com.vpnroute.browser` (`src/native-host/`) — мост между расширением и Service без собственной бизнес-логики. Он правил не хранит и не кэширует, файлы, реестр, сеть и процессы не трогает.
 
 ## Поведение V1
 
@@ -83,15 +82,21 @@ VPN Route Service
 - Phase 0B, Native Messaging ping/pong: **PASS в Yandex Browser**, Chrome намеренно не тестировался. `docs/phase0b-acceptance.md`.
 - Phase 1, доменная модель и matcher: **PASS, автоматические тесты**. `src/domain/browser-routing/`, контракт `docs/browser-routing-contract-v1.md`.
 - Phase 2, PAC compiler: **PASS, автоматические тесты**. `src/pac/`, описание `docs/pac-compiler-v1.md`.
-- Phase 3, production MV3 extension: автоматические тесты PASS, **ручная проверка в Yandex ещё не пройдена**. Применяет PAC из фиксированного состояния. `src/extension/`, `docs/phase3-extension-runtime.md`, инструкция `docs/phase3-acceptance.md`.
+- Phase 3, production MV3 extension из фиксированного состояния: **FULL PASS в Yandex Browser**, включая PAC 382 KB и read-back `data_match`. `src/extension/`, `docs/phase3-extension-runtime.md`, результаты `docs/phase3-acceptance.md`.
+- Phase 4, production native state transport (extension → `com.vpnroute.browser` → интерфейс клиента Service): **PASS, автоматические тесты**. Service ещё не подключён, `getState` отвечает `service_unavailable`. `docs/phase4-native-state-transport.md`, протокол `docs/native-messaging-protocol-v1.md`.
 
 Временный код feasibility-фазы лежит в `spike/` и в продукт не переносится.
 
 ```text
-npm test
-npm run build:extension          # dist/extension для «Загрузить распакованное»
-npm run build:extension:large    # dev-only: ~10000 правил
+npm test                          # Node: domain, PAC, extension, integration
+npm run test:native-host          # xUnit: production native host
+npm run build:extension           # dist/extension, Fixture (по умолчанию)
+npm run build:extension:native    # dist/extension, Native: состояние от native host
+npm run build:extension:large     # dev-only: ~10000 правил
+npm run build:native-host         # dist/native-host/SelectiveVpnRouter.NativeHost.exe + smoke
 npm run measure:pac
 ```
 
-Тесты идут на встроенном `node --test`, без зависимостей. Сгенерированный PAC исполняется в изолированном `node:vm` и сверяется с matcher Phase 1.
+Регистрация host — только HKCU, без UAC: `scripts\native-host\register.ps1`, `status.ps1`, `unregister.ps1`.
+
+JS-тесты идут на встроенном `node --test`, без зависимостей. Сгенерированный PAC исполняется в изолированном `node:vm` и сверяется с matcher Phase 1.

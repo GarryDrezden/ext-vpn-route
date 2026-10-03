@@ -1,15 +1,24 @@
 import { compilePacScript } from "../pac/index.js";
 import { createChromeProxy, createChromeStorage } from "./runtime/chrome-adapter.js";
-import { DIAGNOSTICS_STORAGE_KEY, PHASE3_PROXY_ENDPOINT } from "./runtime/config.js";
+import { DIAGNOSTICS_STORAGE_KEY, SOURCE_STORAGE_KEY } from "./runtime/config.js";
 import { createProxyController } from "./runtime/proxy-controller.js";
-import { FIXTURE_NAME, SMOKE_STATE } from "./state/smoke-state.js";
+import { createRoutingCoordinator } from "./runtime/routing-coordinator.js";
+import { createStateSource } from "./state/source.js";
+
+const source = createStateSource(chrome);
 
 const controller = createProxyController({
   proxy: createChromeProxy(chrome),
   storage: createChromeStorage(chrome, DIAGNOSTICS_STORAGE_KEY),
-  loadState: () => SMOKE_STATE,
   compile: compilePacScript,
-  endpoint: PHASE3_PROXY_ENDPOINT
+  ...(source.builtInState || {})
+});
+
+const coordinator = createRoutingCoordinator({
+  mode: source.mode,
+  controller,
+  provider: source.provider || undefined,
+  storage: source.provider ? createChromeStorage(chrome, SOURCE_STORAGE_KEY) : undefined
 });
 
 function report(label) {
@@ -17,11 +26,11 @@ function report(label) {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  controller.apply("installed").catch(report("apply on install"));
+  coordinator.sync("installed").catch(report("sync on install"));
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  controller.apply("startup").catch(report("apply on startup"));
+  coordinator.sync("startup").catch(report("sync on startup"));
 });
 
 if (chrome.proxy && chrome.proxy.onProxyError) {
@@ -31,9 +40,9 @@ if (chrome.proxy && chrome.proxy.onProxyError) {
 }
 
 const COMMANDS = Object.freeze({
-  status: () => controller.refresh(),
-  reapply: () => controller.apply("popup"),
-  clear: () => controller.clear()
+  status: () => coordinator.status(),
+  reapply: () => coordinator.sync("popup"),
+  clear: () => coordinator.clear()
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -44,8 +53,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!command) return false;
 
   command().then(
-    (diagnostics) => sendResponse({ ok: true, fixture: FIXTURE_NAME, diagnostics }),
-    (error) => sendResponse({ ok: false, fixture: FIXTURE_NAME, error: String(error && error.message) })
+    (result) => sendResponse({
+      ok: true,
+      mode: result.mode,
+      fixture: source.fixture,
+      protection: result.protection,
+      source: result.source,
+      diagnostics: result.diagnostics
+    }),
+    (error) => sendResponse({ ok: false, mode: source.mode, fixture: source.fixture, error: String(error && error.message) })
   );
   return true;
 });

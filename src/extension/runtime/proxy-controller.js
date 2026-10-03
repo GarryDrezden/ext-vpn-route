@@ -81,7 +81,8 @@ function errorText(error) {
  * Classifies what the browser reports as the effective proxy configuration.
  *
  * @param {{ levelOfControl?: string, value?: any }} details
- * @param {{ script: string, revision: number } | null} compiled
+ * @param {{ script?: string, revision: number, scriptLength?: number } | null} compiled
+ *   the PAC that should be active; without `script` it is matched by header revision and length
  * @param {{ revision: number, scriptLength: number } | null} lastApplied
  */
 export function classifyActive(details, compiled, lastApplied) {
@@ -104,8 +105,12 @@ export function classifyActive(details, compiled, lastApplied) {
   }
 
   if (data !== null) {
-    if (compiled && data === normalizePac(compiled.script)) {
+    if (compiled && typeof compiled.script === "string" && data === normalizePac(compiled.script)) {
       return { pac: ActivePac.Current, revision: compiled.revision, verification: "data_match", ...base };
+    }
+    if (compiled && typeof compiled.script !== "string" &&
+      base.headerRevision === compiled.revision && data.length === compiled.scriptLength) {
+      return { pac: ActivePac.Current, revision: compiled.revision, verification: "header_and_length", ...base };
     }
     if (lastApplied && base.headerRevision === lastApplied.revision && data.length === lastApplied.scriptLength) {
       return { pac: ActivePac.Previous, revision: lastApplied.revision, verification: "header_and_length", ...base };
@@ -157,12 +162,18 @@ function compileSummary(result) {
 }
 
 /**
+ * Two state supply modes:
+ * - build-time state: `loadState` + `endpoint` are given and recompiled on demand;
+ * - pushed snapshots: no `loadState`; every `apply(reason, snapshot)` carries
+ *   `{ state, proxyEndpoint: { host, port } }`. Between applies (e.g. after a service
+ *   worker restart) the last successful apply is the reference for CURRENT.
+ *
  * @param {{
  *   proxy: { available: boolean, get(): Promise<any>, set(value: any): Promise<void>, clear(): Promise<void> },
  *   storage: { read(): Promise<any>, write(value: any): Promise<void> },
- *   loadState: () => unknown,
+ *   loadState?: () => unknown,
  *   compile: (state: unknown, options: object) => any,
- *   endpoint: { proxyHost: string, proxyPort: number },
+ *   endpoint?: { proxyHost: string, proxyPort: number },
  *   now?: () => string
  * }} deps
  */
@@ -193,12 +204,25 @@ export function createProxyController(deps) {
     return { kind, result, at: now(), message: message ? clip(message) : null };
   }
 
-  function compileCurrent(d) {
+  const hasBuiltInState = typeof deps.loadState === "function";
+  let compileAttempted = false;
+
+  function compileCurrent(d, snapshot) {
+    compileAttempted = true;
     let state;
     let result;
     try {
-      state = deps.loadState();
-      result = deps.compile(state, { proxyHost: deps.endpoint.proxyHost, proxyPort: deps.endpoint.proxyPort });
+      let options;
+      if (snapshot) {
+        state = snapshot.state;
+        options = { proxyHost: snapshot.proxyEndpoint.host, proxyPort: snapshot.proxyEndpoint.port };
+      } else if (hasBuiltInState) {
+        state = deps.loadState();
+        options = { proxyHost: deps.endpoint.proxyHost, proxyPort: deps.endpoint.proxyPort };
+      } else {
+        throw new Error("No state snapshot was supplied.");
+      }
+      result = deps.compile(state, options);
     } catch (error) {
       result = { ok: false, error: { code: "compile_exception", message: errorText(error) }, issues: [] };
     }
@@ -210,7 +234,7 @@ export function createProxyController(deps) {
 
   function observeInto(d, details) {
     d.levelOfControl = details && details.levelOfControl ? details.levelOfControl : "unknown";
-    const active = classifyActive(details, compiled, d.lastApplied);
+    const active = classifyActive(details, compiled || lastSuccessfulReference(d), d.lastApplied);
     d.active = {
       pac: active.pac,
       revision: active.revision,
@@ -221,6 +245,11 @@ export function createProxyController(deps) {
       headerRevision: active.headerRevision
     };
     return active;
+  }
+
+  function lastSuccessfulReference(d) {
+    if (hasBuiltInState || compileAttempted || d.status !== Status.Applied || !d.lastApplied) return null;
+    return { revision: d.lastApplied.revision, scriptLength: d.lastApplied.scriptLength };
   }
 
   async function observe(d) {
@@ -245,7 +274,7 @@ export function createProxyController(deps) {
     return save(d);
   }
 
-  async function apply(reason) {
+  async function apply(reason, snapshot) {
     const kind = "apply:" + (reason || "manual");
     const d = await load();
 
@@ -257,7 +286,7 @@ export function createProxyController(deps) {
     }
     d.proxyApi = "AVAILABLE";
 
-    const result = compileCurrent(d);
+    const result = compileCurrent(d, snapshot);
     if (!result.ok) {
       await observe(d);
       const protection = d.active.pac === ActivePac.Previous
@@ -340,7 +369,7 @@ export function createProxyController(deps) {
       return save(d);
     }
     d.proxyApi = "AVAILABLE";
-    if (!compiled) compileCurrent(d);
+    if (!compiled && hasBuiltInState) compileCurrent(d);
 
     try {
       await deps.proxy.clear();
@@ -375,7 +404,7 @@ export function createProxyController(deps) {
       return save(d);
     }
     d.proxyApi = "AVAILABLE";
-    if (!compiled) compileCurrent(d);
+    if (!compiled && hasBuiltInState) compileCurrent(d);
 
     let details;
     try {
@@ -414,9 +443,10 @@ export function createProxyController(deps) {
   }
 
   return Object.freeze({
-    apply: (reason) => serial(() => apply(reason)),
+    apply: (reason, snapshot) => serial(() => apply(reason, snapshot)),
     clear: () => serial(clear),
     refresh: () => serial(refresh),
+    read: () => serial(load),
     recordProxyError: (details) => serial(() => recordProxyError(details))
   });
 }

@@ -6,7 +6,12 @@
 //   pac/*.js                   <- src/pac/*.js
 //   domain/browser-routing/*.js <- src/domain/browser-routing/*.js
 //
-// Usage: node scripts/build-extension.js [--fixture=normal|large] [--out=<dir inside dist/>]
+// The state source is fixed at build time:
+//   --mode=fixture (default)  build-time fixture, permissions proxy + storage, no native messaging code;
+//   --mode=native             extension/state/source.js <- source-native.js, adds nativeMessaging,
+//                             contains no fixture module.
+//
+// Usage: node scripts/build-extension.js [--mode=fixture|native] [--fixture=normal|large] [--out=<dir inside dist/>]
 
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -21,14 +26,37 @@ export const DEFAULT_OUT = path.join(DIST_ROOT, "extension");
 export const PRODUCTION_EXTENSION_ID = "lfaekfalhkgmbfdjjlfcalanhijeaien";
 export const SPIKE_EXTENSION_ID = "onodojebmdbcndjelgfhoiffeojngmbd";
 export const FIXTURES = Object.freeze(["normal", "large"]);
+export const MODES = Object.freeze(["fixture", "native"]);
+export const NATIVE_HOST_NAME = "com.vpnroute.browser";
 
-const SOURCES = Object.freeze([
-  { from: "src/extension", to: "extension", skip: ["manifest.json"] },
-  { from: "src/pac", to: "pac" },
-  { from: "src/domain/browser-routing", to: "domain/browser-routing" }
+const NATIVE_ONLY_FILES = Object.freeze([
+  "state/source-native.js", "state/native-state-provider.js", "state/snapshot.js"
 ]);
+const FIXTURE_ONLY_FILES = Object.freeze(["state/smoke-state.js", "state/source.js"]);
+const NATIVE_MESSAGING_FILE = "extension/state/native-state-provider.js";
+
+const SOURCES = Object.freeze({
+  fixture: Object.freeze([
+    { from: "src/extension", to: "extension", skip: ["manifest.json", ...NATIVE_ONLY_FILES] },
+    { from: "src/pac", to: "pac" },
+    { from: "src/domain/browser-routing", to: "domain/browser-routing" }
+  ]),
+  native: Object.freeze([
+    {
+      from: "src/extension",
+      to: "extension",
+      skip: ["manifest.json", "state/source-native.js", ...FIXTURE_ONLY_FILES],
+      rename: { "state/source-native.js": "state/source.js" }
+    },
+    { from: "src/pac", to: "pac" },
+    { from: "src/domain/browser-routing", to: "domain/browser-routing" }
+  ])
+});
 const ALLOWED_EXTENSIONS = Object.freeze([".js", ".json", ".html", ".css"]);
-const ALLOWED_PERMISSIONS = Object.freeze(["proxy", "storage"]);
+const PERMISSIONS = Object.freeze({
+  fixture: Object.freeze(["proxy", "storage"]),
+  native: Object.freeze(["nativeMessaging", "proxy", "storage"])
+});
 const FORBIDDEN_MANIFEST_KEYS = Object.freeze([
   "host_permissions", "optional_permissions", "optional_host_permissions", "content_scripts",
   "externally_connectable", "web_accessible_resources", "content_security_policy", "update_url"
@@ -53,9 +81,11 @@ const FORBIDDEN_CODE = Object.freeze([
   [/\bchrome\.tabs\b/, "chrome.tabs"],
   [/\bchrome\.history\b/, "chrome.history"],
   [/\bchrome\.webRequest\b/, "chrome.webRequest"],
-  [/\bsendNativeMessage\b|\bconnectNative\b/, "native messaging"],
+  [/\bchrome\.scripting\b/, "chrome.scripting"],
+  [/\bconnectNative\b/, "long-lived native port"],
   [/https?:\/\/[a-z0-9]/i, "remote URL"]
 ]);
+const NATIVE_MESSAGING_CODE = /\bsendNativeMessage\b|\bnativeMessaging\b/;
 
 function assertSafeOut(outDir) {
   const resolved = path.resolve(outDir);
@@ -76,24 +106,36 @@ function walk(dir, base = dir) {
   return files;
 }
 
+function copyFile(from, to) {
+  mkdirSync(path.dirname(to), { recursive: true });
+  cpSync(from, to);
+}
+
 /**
- * @param {{ fixture?: "normal" | "large", outDir?: string, quiet?: boolean }} [options]
+ * @param {{ mode?: "fixture" | "native", fixture?: "normal" | "large", outDir?: string }} [options]
  */
 export async function buildExtension(options = {}) {
-  const fixture = options.fixture || "normal";
-  if (!FIXTURES.includes(fixture)) throw new Error("Unknown fixture " + fixture);
+  const mode = options.mode || "fixture";
+  if (!MODES.includes(mode)) throw new Error("Unknown mode " + mode);
+  if (mode === "native" && options.fixture) throw new Error("A native build has no fixture");
+  const fixture = mode === "fixture" ? options.fixture || "normal" : null;
+  if (mode === "fixture" && !FIXTURES.includes(fixture)) throw new Error("Unknown fixture " + fixture);
   const outDir = assertSafeOut(options.outDir || DEFAULT_OUT);
 
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
-  cpSync(path.join(ROOT, "src/extension/manifest.json"), path.join(outDir, "manifest.json"));
-  for (const source of SOURCES) {
+
+  const manifest = JSON.parse(readFileSync(path.join(ROOT, "src/extension/manifest.json"), "utf8"));
+  manifest.permissions = [...PERMISSIONS[mode]];
+  writeFileSync(path.join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf8");
+
+  for (const source of SOURCES[mode]) {
     const fromDir = path.join(ROOT, source.from);
     for (const file of walk(fromDir)) {
+      const renamed = source.rename && source.rename[file];
+      if (renamed) copyFile(path.join(fromDir, file), path.join(outDir, source.to, renamed));
       if (source.skip && source.skip.includes(file)) continue;
-      const target = path.join(outDir, source.to, file);
-      mkdirSync(path.dirname(target), { recursive: true });
-      cpSync(path.join(fromDir, file), target);
+      copyFile(path.join(fromDir, file), path.join(outDir, source.to, file));
     }
   }
   if (fixture === "large") {
@@ -101,7 +143,7 @@ export async function buildExtension(options = {}) {
       renderFixtureModule("large", createLargeFixtureState()), "utf8");
   }
 
-  return validateExtension(outDir, { expectFixture: fixture });
+  return validateExtension(outDir, { expectMode: mode, expectFixture: fixture });
 }
 
 function importSpecifiers(source) {
@@ -125,11 +167,21 @@ function insideRoot(root, target) {
  * Validates a built extension directory. Throws on the first category of problems found.
  *
  * @param {string} outDir
- * @param {{ expectFixture?: string }} [options]
+ * @param {{ expectMode?: "fixture" | "native", expectFixture?: string | null }} [options]
  */
 export async function validateExtension(outDir, options = {}) {
   const problems = [];
   const files = walk(outDir);
+  const mode = options.expectMode || (files.includes(NATIVE_MESSAGING_FILE) ? "native" : "fixture");
+  if (!MODES.includes(mode)) throw new Error("Unknown mode " + mode);
+
+  const mustBeAbsent = mode === "native"
+    ? ["extension/state/smoke-state.js", "extension/state/source-native.js"]
+    : NATIVE_ONLY_FILES.map((file) => "extension/" + file);
+  for (const file of mustBeAbsent) {
+    if (files.includes(file)) problems.push(mode + " build must not contain " + file);
+  }
+  if (!files.includes("extension/state/source.js")) problems.push("missing extension/state/source.js");
 
   for (const file of files) {
     if (!ALLOWED_EXTENSIONS.includes(path.extname(file))) problems.push("unexpected file type: " + file);
@@ -144,8 +196,8 @@ export async function validateExtension(outDir, options = {}) {
   if (manifest.manifest_version !== 3) problems.push("manifest_version must be 3");
   if (typeof manifest.name !== "string" || typeof manifest.version !== "string") problems.push("manifest name/version missing");
   const permissions = Array.isArray(manifest.permissions) ? [...manifest.permissions].sort() : [];
-  if (JSON.stringify(permissions) !== JSON.stringify(ALLOWED_PERMISSIONS)) {
-    problems.push("permissions must be exactly " + ALLOWED_PERMISSIONS.join(", ") + "; got " + permissions.join(", "));
+  if (JSON.stringify(permissions) !== JSON.stringify(PERMISSIONS[mode])) {
+    problems.push("permissions must be exactly " + PERMISSIONS[mode].join(", ") + "; got " + permissions.join(", "));
   }
   for (const key of FORBIDDEN_MANIFEST_KEYS) {
     if (key in manifest) problems.push("manifest must not declare " + key);
@@ -175,6 +227,10 @@ export async function validateExtension(outDir, options = {}) {
     for (const [pattern, label] of FORBIDDEN_CODE) {
       if (pattern.test(source)) problems.push(file + ": forbidden " + label);
     }
+    if (NATIVE_MESSAGING_CODE.test(source) && !(mode === "native" && file === NATIVE_MESSAGING_FILE)) {
+      problems.push(file + ": native messaging is allowed only in " + NATIVE_MESSAGING_FILE + " of a native build");
+    }
+    if (mode === "native" && /smoke-state/.test(source)) problems.push(file + ": native build references the fixture");
     try {
       execFileSync(process.execPath, ["--check", full], { stdio: "pipe" });
     } catch (error) {
@@ -197,10 +253,23 @@ export async function validateExtension(outDir, options = {}) {
     throw new Error("Extension build is invalid:\n  " + problems.join("\n  "));
   }
 
-  const fixtureModule = await import(pathToFileURL(path.join(outDir, "extension/state/smoke-state.js")).href + "?v=" + Date.now());
-  const { compilePacScript } = await import(pathToFileURL(path.join(outDir, "pac/index.js")).href);
-  const { validateBrowserRoutingState } = await import(pathToFileURL(path.join(outDir, "domain/browser-routing/index.js")).href);
-  const { PHASE3_PROXY_ENDPOINT } = await import(pathToFileURL(path.join(outDir, "extension/runtime/config.js")).href);
+  const load = (file) => import(pathToFileURL(path.join(outDir, file)).href + "?v=" + Date.now());
+  const sourceModule = await load("extension/state/source.js");
+  const expectedSource = mode === "native" ? "Native" : "Fixture";
+  if (sourceModule.STATE_SOURCE !== expectedSource) {
+    throw new Error("State source is " + sourceModule.STATE_SOURCE + ", expected " + expectedSource);
+  }
+  const config = await load("extension/runtime/config.js");
+  if (config.NATIVE_HOST_NAME !== NATIVE_HOST_NAME) throw new Error("Native host name is not " + NATIVE_HOST_NAME);
+
+  if (mode === "native") {
+    return { outDir, extensionId, files, mode, fixture: null, hostName: config.NATIVE_HOST_NAME, permissions };
+  }
+
+  const fixtureModule = await load("extension/state/smoke-state.js");
+  const { compilePacScript } = await load("pac/index.js");
+  const { validateBrowserRoutingState } = await load("domain/browser-routing/index.js");
+  const { PHASE3_PROXY_ENDPOINT } = config;
   const validated = validateBrowserRoutingState(fixtureModule.SMOKE_STATE);
   if (!validated.ok) throw new Error("Fixture state is invalid: " + JSON.stringify(validated.issues.slice(0, 5)));
   if (options.expectFixture && fixtureModule.FIXTURE_NAME !== options.expectFixture) {
@@ -213,6 +282,8 @@ export async function validateExtension(outDir, options = {}) {
     outDir,
     extensionId,
     files,
+    mode,
+    permissions,
     fixture: fixtureModule.FIXTURE_NAME,
     revision: compiled.metadata.revision,
     ruleCount: compiled.metadata.ruleCount,
@@ -225,9 +296,10 @@ export async function validateExtension(outDir, options = {}) {
 function parseArgs(argv) {
   const options = {};
   for (const arg of argv) {
-    const match = /^--(fixture|out)=(.+)$/.exec(arg);
+    const match = /^--(mode|fixture|out)=(.+)$/.exec(arg);
     if (!match) throw new Error("Unknown argument " + arg);
-    options[match[1] === "out" ? "outDir" : "fixture"] = match[1] === "out" ? path.resolve(match[2]) : match[2];
+    if (match[1] === "out") options.outDir = path.resolve(match[2]);
+    else options[match[1]] = match[2];
   }
   return options;
 }
@@ -237,9 +309,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.log("Built " + report.outDir);
     console.log("  extension ID: " + report.extensionId);
     console.log("  files:        " + report.files.length);
-    console.log("  fixture:      " + report.fixture + ", revision " + report.revision +
-      ", " + report.enabledRuleCount + " enabled of " + report.ruleCount + " rules");
-    console.log("  PAC:          " + report.pacBytes + " bytes, VPN route " + report.proxyRoute);
+    console.log("  state source: " + (report.mode === "native" ? "Native (" + report.hostName + ")" : "Fixture"));
+    console.log("  permissions:  " + report.permissions.join(", "));
+    if (report.mode === "fixture") {
+      console.log("  fixture:      " + report.fixture + ", revision " + report.revision +
+        ", " + report.enabledRuleCount + " enabled of " + report.ruleCount + " rules");
+      console.log("  PAC:          " + report.pacBytes + " bytes, VPN route " + report.proxyRoute);
+    }
     console.log("BUILD OK");
   }, (error) => {
     console.error(error.message);

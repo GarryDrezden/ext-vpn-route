@@ -66,6 +66,60 @@ export function createFakeStorage(initial) {
   return storage;
 }
 
+/**
+ * chrome.runtime stand-in for sendNativeMessage. `handler(hostName, message)` returns
+ * { response } | { lastError: string } | { hang: true } | { throws: string }.
+ */
+export function createFakeNativeRuntime(handler) {
+  const runtime = {
+    lastError: undefined,
+    calls: [],
+    sendNativeMessage(hostName, message, callback) {
+      runtime.calls.push({ hostName, message: clone(message) });
+      const outcome = handler(hostName, clone(message)) || {};
+      if (outcome.throws) throw new Error(outcome.throws);
+      if (outcome.hang) return;
+      setImmediate(() => {
+        if (outcome.lastError) {
+          runtime.lastError = { message: outcome.lastError };
+          try { callback(undefined); } finally { runtime.lastError = undefined; }
+        } else {
+          callback(clone(outcome.response));
+        }
+      });
+    }
+  };
+  return runtime;
+}
+
+/** A VPN Route native host answering getState with the given state and endpoint. */
+export function nativeHostReturning(state, proxyEndpoint = { host: "127.0.0.1", port: 17891 }) {
+  return (hostName, message) => ({
+    response: { protocolVersion: 1, requestId: message.requestId, ok: true, result: { state: clone(state), proxyEndpoint } }
+  });
+}
+
+export function nativeHostFailing(code, message = "failure") {
+  return (hostName, request) => ({
+    response: { protocolVersion: 1, requestId: request.requestId, ok: false, error: { code, message } }
+  });
+}
+
+export function routingState(revision, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    revision,
+    defaultRoute: "Direct",
+    rules: [
+      {
+        id: "youtube", name: "YouTube", host: "youtube.com", matchType: "DomainAndSubdomains",
+        routeMode: "VPN", enabled: true, source: "User", notes: null
+      }
+    ],
+    ...overrides
+  };
+}
+
 function clone(value) {
   return value === undefined || value === null ? value : JSON.parse(JSON.stringify(value));
 }

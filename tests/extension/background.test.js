@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createFakeProxy } from "./fakes.js";
+import { rmSync } from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { DIST_ROOT, buildExtension } from "../../scripts/build-extension.js";
+import { createFakeNativeRuntime, createFakeProxy, nativeHostFailing, nativeHostReturning, routingState } from "./fakes.js";
 
 const EXTENSION_ID = "lfaekfalhkgmbfdjjlfcalanhijeaien";
 
@@ -107,7 +111,58 @@ test("service worker wires lifecycle events, commands and chrome.runtime.lastErr
 
     const stored = Object.keys(mock.storage);
     assert.deepEqual(stored, ["vpnRouteDiagnostics"]);
+    assert.equal(status.mode, "Fixture");
+    assert.equal(status.protection, "CURRENT");
   } finally {
     delete globalThis.chrome;
+  }
+});
+
+test("native build service worker fetches state over native messaging and keeps last-known-good", async () => {
+  const outDir = path.join(DIST_ROOT, ".test-bg-" + process.pid, "extension");
+  await buildExtension({ mode: "native", outDir });
+  const mock = createChromeMock();
+  const host = { handler: nativeHostReturning(routingState(42)) };
+  const native = createFakeNativeRuntime((name, message) => host.handler(name, message));
+  mock.chrome.runtime.sendNativeMessage = (name, message, callback) =>
+    native.sendNativeMessage(name, message, (response) => {
+      mock.chrome.runtime.lastError = native.lastError;
+      try { callback(response); } finally { mock.chrome.runtime.lastError = undefined; }
+    });
+  globalThis.chrome = mock.chrome;
+  try {
+    await import(pathToFileURL(path.join(outDir, "extension/background.js")).href);
+    const { runtime } = mock.chrome;
+    assert.equal(native.calls.length, 0, "loading the worker must not contact the host");
+
+    runtime.onInstalled.listeners[0]({ reason: "install" });
+    let status = await send(mock.chrome, { command: "status" });
+    assert.equal(status.mode, "Native");
+    assert.equal(status.fixture, null);
+    assert.equal(status.diagnostics.status, "APPLIED");
+    assert.equal(status.diagnostics.lastApplied.revision, 42);
+    assert.equal(status.source.hostName, "com.vpnroute.browser");
+    assert.equal(status.protection, "CURRENT");
+    assert.equal(native.calls[0].hostName, "com.vpnroute.browser");
+
+    host.handler = nativeHostFailing("service_unavailable", "VPN Route Service is unavailable.");
+    const refreshed = await send(mock.chrome, { command: "reapply" });
+    assert.equal(refreshed.source.service, "UNAVAILABLE");
+    assert.equal(refreshed.source.lastDecision.kind, "fetch_failed");
+    assert.equal(refreshed.diagnostics.active.revision, 42);
+    assert.equal(refreshed.protection, "LAST_KNOWN_GOOD");
+    assert.equal(mock.proxy.calls.set.length, 1);
+    assert.equal(mock.proxy.calls.clear, 0);
+
+    runtime.onStartup.listeners[0]();
+    status = await send(mock.chrome, { command: "status" });
+    assert.equal(native.calls.length, 3);
+    assert.equal(mock.proxy.calls.set.length, 1);
+
+    assert.deepEqual(Object.keys(mock.storage).sort(), ["vpnRouteDiagnostics", "vpnRouteStateSource"]);
+    assert.equal(JSON.stringify(mock.storage).includes("youtube.com"), false);
+  } finally {
+    delete globalThis.chrome;
+    rmSync(path.dirname(outDir), { recursive: true, force: true });
   }
 });

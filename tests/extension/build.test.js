@@ -27,27 +27,35 @@ const EXPECTED_FILES = [
   "domain/browser-routing/state.js",
   "extension/background.js", "extension/popup/popup.css", "extension/popup/popup.html", "extension/popup/popup.js",
   "extension/runtime/chrome-adapter.js", "extension/runtime/config.js", "extension/runtime/proxy-controller.js",
-  "extension/state/smoke-state.js",
+  "extension/runtime/routing-coordinator.js",
+  "extension/state/smoke-state.js", "extension/state/source.js",
   "manifest.json",
   "pac/compiler.js", "pac/endpoint.js", "pac/index.js", "pac/literal.js", "pac/policy.js", "pac/runtime.js"
 ];
 
+const EXPECTED_NATIVE_FILES = EXPECTED_FILES
+  .filter((file) => file !== "extension/state/smoke-state.js")
+  .concat(["extension/state/native-state-provider.js", "extension/state/snapshot.js"])
+  .sort();
+
 let normal;
 let large;
+let native;
 
 before(async () => {
   normal = await buildExtension({ outDir: path.join(TEST_ROOT, "normal", "extension") });
   large = await buildExtension({ fixture: "large", outDir: path.join(TEST_ROOT, "large", "extension") });
+  native = await buildExtension({ mode: "native", outDir: path.join(TEST_ROOT, "native", "extension") });
 });
 
 after(() => {
   rmSync(TEST_ROOT, { recursive: true, force: true });
 });
 
-function copyBuild(name) {
+function copyBuild(name, from = normal) {
   const target = path.join(TEST_ROOT, "tamper-" + name, "extension");
   rmSync(target, { recursive: true, force: true });
-  cpSync(normal.outDir, target, { recursive: true });
+  cpSync(from.outDir, target, { recursive: true });
   return target;
 }
 
@@ -137,6 +145,87 @@ describe("build validation rejects bad output", () => {
 
   test("an untampered copy validates", async () => {
     await validateExtension(copyBuild("clean"));
+  });
+
+  test("fixture build rejects native messaging code and permission", async () => {
+    let dir = copyBuild("fixture-native-call");
+    appendTo(dir, "extension/background.js", "\nchrome.runtime.sendNativeMessage(\"x\", {}, () => {});\n");
+    await assert.rejects(validateExtension(dir), /native messaging is allowed only/);
+
+    dir = copyBuild("fixture-native-permission");
+    editManifest(dir, (m) => { m.permissions.push("nativeMessaging"); });
+    await assert.rejects(validateExtension(dir, { expectMode: "fixture" }), /permissions must be exactly proxy, storage/);
+
+    dir = copyBuild("fixture-native-file");
+    cpSync(path.join(ROOT, "src/extension/state/snapshot.js"), path.join(dir, "extension/state/snapshot.js"));
+    await assert.rejects(validateExtension(dir, { expectMode: "fixture" }), /must not contain extension\/state\/snapshot\.js/);
+  });
+});
+
+describe("native build", () => {
+  test("contains the native provider and no fixture", () => {
+    assert.deepEqual(native.files, EXPECTED_NATIVE_FILES);
+    assert.equal(native.mode, "native");
+    assert.equal(native.fixture, null);
+    assert.equal(native.hostName, "com.vpnroute.browser");
+    assert.equal(native.extensionId, PRODUCTION_EXTENSION_ID);
+    for (const file of native.files.filter((f) => f.endsWith(".js"))) {
+      const text = readFileSync(path.join(native.outDir, file), "utf8");
+      assert.equal(text.includes("smoke-state"), false, file);
+      assert.equal(text.includes("SMOKE_STATE"), false, file);
+    }
+  });
+
+  test("manifest adds only nativeMessaging", () => {
+    const manifest = JSON.parse(readFileSync(path.join(native.outDir, "manifest.json"), "utf8"));
+    assert.deepEqual(manifest.permissions, ["nativeMessaging", "proxy", "storage"]);
+    for (const key of ["host_permissions", "content_scripts", "optional_permissions", "externally_connectable"]) {
+      assert.equal(key in manifest, false, key);
+    }
+  });
+
+  test("state source module is the native one", () => {
+    assert.equal(
+      readFileSync(path.join(native.outDir, "extension/state/source.js"), "utf8"),
+      readFileSync(path.join(ROOT, "src/extension/state/source-native.js"), "utf8"));
+  });
+
+  test("native build cannot take a fixture", async () => {
+    await assert.rejects(buildExtension({ mode: "native", fixture: "large", outDir: path.join(TEST_ROOT, "x", "extension") }),
+      /native build has no fixture/);
+    await assert.rejects(buildExtension({ mode: "socket", outDir: path.join(TEST_ROOT, "x", "extension") }), /Unknown mode/);
+  });
+
+  const nativeCases = [
+    ["fixture smuggled in", (dir) => cpSync(path.join(ROOT, "src/extension/state/smoke-state.js"),
+      path.join(dir, "extension/state/smoke-state.js")), /must not contain extension\/state\/smoke-state\.js/],
+    ["fixture import", (dir) => appendTo(dir, "extension/background.js", "\n// ./state/smoke-state.js\n"), /references the fixture/],
+    ["connectNative", (dir) => appendTo(dir, "extension/state/native-state-provider.js", "\nchrome.runtime.connectNative(\"x\");\n"),
+      /long-lived native port/],
+    ["native call elsewhere", (dir) => appendTo(dir, "extension/background.js", "\nchrome.runtime.sendNativeMessage(\"x\", {});\n"),
+      /native messaging is allowed only/],
+    ["extra permission", (dir) => editManifest(dir, (m) => { m.permissions.push("tabs"); }), /permissions must be exactly/],
+    ["missing nativeMessaging", (dir) => editManifest(dir, (m) => { m.permissions = ["proxy", "storage"]; }),
+      /permissions must be exactly nativeMessaging, proxy, storage/],
+    ["host name", (dir) => {
+      const full = path.join(dir, "extension/runtime/config.js");
+      writeFileSync(full, readFileSync(full, "utf8").replace("com.vpnroute.browser", "com.vpnroute.phase0b"));
+    }, /Native host name is not com\.vpnroute\.browser/],
+    ["fixture source", (dir) => cpSync(path.join(ROOT, "src/extension/state/source.js"), path.join(dir, "extension/state/source.js")),
+      /references the fixture|State source is Fixture/]
+  ];
+
+  for (const [name, tamper, expected] of nativeCases) {
+    test("rejects " + name, async () => {
+      const dir = copyBuild("native-" + name.replace(/\s+/g, "-"), native);
+      tamper(dir);
+      await assert.rejects(validateExtension(dir), expected);
+    });
+  }
+
+  test("an untampered native copy validates", async () => {
+    const report = await validateExtension(copyBuild("native-clean", native));
+    assert.equal(report.mode, "native");
   });
 });
 

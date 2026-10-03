@@ -2,6 +2,27 @@
 
 Только Yandex Browser. Chrome и Edge не нужны.
 
+## Результат: FULL PASS
+
+Проверено вручную в Yandex Browser на сборке `5aed8e5`.
+
+| Шаг | Итог | Наблюдение |
+|---|---|---|
+| A. Normal fixture | PASS | ID `lfaekfalhkgmbfdjjlfcalanhijeaien`; Proxy API `AVAILABLE`; `controlled_by_this_extension`; fixture `normal`, schemaVersion 1, revision 3001, defaultRoute Direct, 3 of 3; `COMPILED` 3001, 4425 bytes, `127.0.0.1:17891`; `APPLIED` 3001, `CURRENT`, `pac_script`, mandatory `true`, Read-back `data_match`, Last error `none` |
+| B. DIRECT | PASS | `example.com` открылся, logger выключен |
+| C. VPN fail-closed | PASS | YouTube не открылся, logger выключен |
+| D. SOCKS5 | PASS | `SOCKS5 CONNECT ATYP=DOMAIN destination=www.youtube.com port=443`, также `accounts.youtube.com`; logger штатно отвечает general SOCKS server failure |
+| E. Clear / Reapply | PASS | см. нюанс ниже; после Reapply: `APPLIED` 3001, `CURRENT`, `pac_script`, mandatory `true`, `data_match`, Last error `none` |
+| F. Large PAC | PASS | `large`, revision 3999, 10000 of 10000, 382165 bytes (~373.2 KiB); `APPLIED` 3999, `CURRENT`, mandatory `true`, `data_match`, Last error `none`. После `npm run build:extension` + «Обновить»: `normal` 3001 `APPLIED` `CURRENT` `data_match` |
+
+Выводы:
+
+- Yandex возвращает inline `pacScript.data` в `proxy.settings.get()`: read-back — `data_match`, в том числе для PAC 382 KB.
+- Inline PAC ~373 KiB принимается и применяется.
+- `Last proxy error: net::ERR_PROXY_CONNECTION_FAILED` в popup — исторический след шагов C/D, где logger выключен или специально отвечает ошибкой. Это не сбой.
+
+Нюанс шага E (окружение, не дефект). Phase 0 spike оставался включённым. После production Clear эффективным стал его старый PAC: raw `get` показал Phase 0 PAC, `www.youtube.com` → `SOCKS5 127.0.0.1:17891`. После выключения spike и очистки его PAC raw API показал `levelOfControl: controllable_by_this_extension`, `value.mode: direct`. Значит, production Clear работает правильно: он снимает только настройку своего расширения, и Chromium возвращает следующую по приоритету.
+
 Cursor уже собрал normal-сборку в `dist\extension` и прогнал автоматические тесты. Повторять сборку не нужно.
 
 ```text
@@ -12,6 +33,8 @@ cd "E:\Работа\OSPanel\domains\ext-vpn-route"
 
 1. Открыть `browser://extensions`.
 2. Phase 0 spike «VPN Route — Phase 0 Spike» **выключить** переключателем, удалять не нужно. Оба расширения управляют прокси: если spike включён, production покажет `CONFLICT`.
+
+   **ВАЖНО:** Phase 0 Spike перед тестом production extension должен быть выключен И не должен оставлять active PAC. Иначе после production Clear эффективным станет PAC spike, и шаг E покажет чужой PAC вместо `direct`.
 3. Включить режим разработчика.
 4. «Загрузить распакованное расширение» → выбрать папку:
 

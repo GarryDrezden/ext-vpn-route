@@ -4,6 +4,8 @@ Production MV3-расширение: фиксированное BrowserRoutingSt
 
 Состояние пока — фиксированный fixture в коде. Service, Native Messaging, хранение правил и их редактор в Phase 3 не входят.
 
+Документ описывает Fixture-сборку. Phase 4 добавил Native-сборку (`nativeMessaging`, состояние от native host), `routing-coordinator.js` и необязательный snapshot в `controller.apply`: см. `docs/phase4-native-state-transport.md`. Для Fixture-сборки всё ниже по-прежнему верно.
+
 ## Структура
 
 ```text
