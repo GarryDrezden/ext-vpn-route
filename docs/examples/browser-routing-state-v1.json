@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "revision": 12,
+  "defaultRoute": "Direct",
+  "rules": [
+    {
+      "id": "youtube",
+      "name": "YouTube",
+      "host": "youtube.com",
+      "matchType": "DomainAndSubdomains",
+      "routeMode": "VPN",
+      "enabled": true,
+      "source": "User",
+      "notes": null
+    },
+    {
+      "id": "chatgpt",
+      "name": "ChatGPT",
+      "host": "chatgpt.com",
+      "matchType": "DomainAndSubdomains",
+      "routeMode": "VPN",
+      "enabled": true,
+      "source": "User",
+      "notes": null
+    },
+    {
+      "id": "google",
+      "name": "Google",
+      "host": "google.com",
+      "matchType": "DomainAndSubdomains",
+      "routeMode": "VPN",
+      "enabled": true,
+      "source": "User",
+      "notes": null
+    },
+    {
+      "id": "google-maps",
+      "name": "Google Maps",
+      "host": "maps.google.com",
+      "matchType": "ExactHost",
+      "routeMode": "Default",
+      "enabled": true,
+      "source": "User",
+      "notes": "Inherit the browser default instead of google.com."
+    },
+    {
+      "id": "ozon",
+      "name": "Ozon",
+      "host": "ozon.ru",
+      "matchType": "DomainAndSubdomains",
+      "routeMode": "Direct",
+      "enabled": true,
+      "source": "User",
+      "notes": null
+    },
+    {
+      "id": "gosuslugi",
+      "name": "Госуслуги",
+      "host": "gosuslugi.ru",
+      "matchType": "DomainAndSubdomains",
+      "routeMode": "Direct",
+      "enabled": false,
+      "source": "User",
+      "notes": null
+    }
+  ]
+}

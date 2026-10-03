@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>VPN Route Phase 0A</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <h1>VPN Route</h1>
+  <p class="phase">Phase 0A</p>
+  <dl>
+    <dt>Proxy API</dt>
+    <dd id="proxy-api">UNKNOWN</dd>
+    <dt>Level of control</dt>
+    <dd id="level-of-control">unknown</dd>
+    <dt>PAC status</dt>
+    <dd id="pac-status">NOT APPLIED</dd>
+    <dt>Test host</dt>
+    <dd id="test-host">www.youtube.com</dd>
+    <dt>SOCKS endpoint</dt>
+    <dd id="socks-endpoint">127.0.0.1:17891</dd>
+    <dt>Last proxy error</dt>
+    <dd id="last-proxy-error">none</dd>
+    <dt>Last operation</dt>
+    <dd id="last-operation">idle</dd>
+  </dl>
+  <button id="reapply" type="button">Reapply PAC</button>
+  <button id="clear" type="button">Clear extension proxy</button>
+
+  <h2>Native Messaging</h2>
+  <p class="phase">Phase 0B</p>
+  <dl>
+    <dt>Host name</dt>
+    <dd id="native-host-name">com.vpnroute.phase0b</dd>
+    <dt>Status</dt>
+    <dd id="native-status">UNKNOWN</dd>
+    <dt>Last ping</dt>
+    <dd id="native-last-ping">never</dd>
+    <dt>Request id</dt>
+    <dd id="native-request-id">none</dd>
+    <dt>Response</dt>
+    <dd id="native-response">none</dd>
+    <dt>Last error</dt>
+    <dd id="native-last-error">none</dd>
+  </dl>
+  <button id="native-ping" type="button">Ping native host</button>
+  <script src="popup.js"></script>
+</body>
+</html>

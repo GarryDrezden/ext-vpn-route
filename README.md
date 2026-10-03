@@ -55,7 +55,7 @@
 
 Более конкретное правило побеждает. `video.google.com` может идти через VPN, пока `google.com` идёт напрямую.
 
-Локальные адреса (`localhost`, `127.0.0.0/8`, `::1` и частные IP-литералы) в VPN-прокси не отправляются.
+Локальные адреса (`localhost`, `127.0.0.0/8`, `::1` и частные IP-литералы) в VPN-прокси не отправляются. Точный список — в `docs/pac-compiler-v1.md`.
 
 ## Как проходит трафик
 
@@ -79,6 +79,16 @@ VPN Route Service
 
 ## Статус
 
-Репозиторий заведён. Кода расширения ещё нет.
+- Phase 0A, browser → PAC → SOCKS5: **PASS** в Yandex Browser и Chrome. `docs/phase0-acceptance.md`.
+- Phase 0B, Native Messaging ping/pong: **PASS в Yandex Browser**, Chrome намеренно не тестировался. `docs/phase0b-acceptance.md`.
+- Phase 1, доменная модель и matcher: `src/domain/browser-routing/`, контракт `docs/browser-routing-contract-v1.md`.
+- Phase 2, PAC compiler: `src/pac/`, описание `docs/pac-compiler-v1.md`. Через `chrome.proxy` пока не применяется.
 
-Сначала нужна проверка, что Yandex Browser и Chrome реально принимают Manifest V3, inline PAC и локальный SOCKS5. После этого — модель доменов, PAC, связь с desktop и интерфейс.
+Временный код feasibility-фазы лежит в `spike/` и в продукт не переносится.
+
+```text
+npm test
+npm run measure:pac
+```
+
+Тесты идут на встроенном `node --test`, без зависимостей. Сгенерированный PAC исполняется в изолированном `node:vm` и сверяется с matcher Phase 1.

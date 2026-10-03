@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "VPN Route — Phase 0 Spike",
+  "version": "0.0.2",
+  "description": "Disposable spike: inline PAC to a local SOCKS5 logger and native messaging ping. Not a VPN.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA29uO3z6pbaXX97vrdzuXVPsERt1kzODuBN+mRq4lxFDaWrHmlmisxVxIdZHZoImDOCsiBGrKNyt+/b4JDy9DhnsDeTj2A7Zu/60tXBs33WyoIjAwPGozKUhgRkuG5lTGJ6d9eeCqJ//kRE7n5Yr9gIHrY9XZjrV78gsmjJctURKsohAvuYGfKhP1Rr2B26OKHEm+4/RT9l1qjLh8HAP44vqb1MhCpgsT6HsrLrdldBsHNTI1X39hcZijEopyicPVGbdUhmEDzRuWeN15DKJgOVkHhIyBYpijDtpsMKyip/P6j90wF9+RxgkfUGbyXhNuTmnxDiwO79vxCFbqY+B38QIDAQAB",
+  "permissions": ["proxy", "storage", "nativeMessaging"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "VPN Route Phase 0",
+    "default_popup": "popup.html"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "ext-vpn-route",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser side of VPN Route: per-domain routing for Chromium.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.js\"",
+    "measure:pac": "node scripts/measure-pac.js"
+  }
+}
