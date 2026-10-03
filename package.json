@@ -9,6 +9,8 @@
   },
   "scripts": {
     "test": "node --test \"tests/**/*.test.js\"",
-    "measure:pac": "node scripts/measure-pac.js"
+    "measure:pac": "node scripts/measure-pac.js",
+    "build:extension": "node scripts/build-extension.js",
+    "build:extension:large": "node scripts/build-extension.js --fixture=large"
   }
 }

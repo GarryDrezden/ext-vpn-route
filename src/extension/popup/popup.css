@@ -1,0 +1,67 @@
+body {
+  width: 380px;
+  margin: 0;
+  padding: 10px 12px;
+  font: 12px/1.4 system-ui, sans-serif;
+  color: #1b1b1b;
+}
+
+h1 {
+  margin: 0;
+  font-size: 15px;
+}
+
+h2 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #555;
+}
+
+.subtitle {
+  margin: 0 0 6px;
+  color: #555;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 2px 8px;
+  margin: 0;
+}
+
+dt {
+  color: #555;
+}
+
+dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.ok {
+  color: #0a7a2f;
+  font-weight: 600;
+}
+
+.bad {
+  color: #b00020;
+  font-weight: 600;
+}
+
+.warn {
+  color: #9a6400;
+  font-weight: 600;
+}
+
+.buttons {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+button {
+  flex: 1;
+  padding: 5px 4px;
+  font: inherit;
+}

@@ -81,13 +81,16 @@ VPN Route Service
 
 - Phase 0A, browser → PAC → SOCKS5: **PASS** в Yandex Browser и Chrome. `docs/phase0-acceptance.md`.
 - Phase 0B, Native Messaging ping/pong: **PASS в Yandex Browser**, Chrome намеренно не тестировался. `docs/phase0b-acceptance.md`.
-- Phase 1, доменная модель и matcher: `src/domain/browser-routing/`, контракт `docs/browser-routing-contract-v1.md`.
-- Phase 2, PAC compiler: `src/pac/`, описание `docs/pac-compiler-v1.md`. Через `chrome.proxy` пока не применяется.
+- Phase 1, доменная модель и matcher: **PASS, автоматические тесты**. `src/domain/browser-routing/`, контракт `docs/browser-routing-contract-v1.md`.
+- Phase 2, PAC compiler: **PASS, автоматические тесты**. `src/pac/`, описание `docs/pac-compiler-v1.md`.
+- Phase 3, production MV3 extension: автоматические тесты PASS, **ручная проверка в Yandex ещё не пройдена**. Применяет PAC из фиксированного состояния. `src/extension/`, `docs/phase3-extension-runtime.md`, инструкция `docs/phase3-acceptance.md`.
 
 Временный код feasibility-фазы лежит в `spike/` и в продукт не переносится.
 
 ```text
 npm test
+npm run build:extension          # dist/extension для «Загрузить распакованное»
+npm run build:extension:large    # dev-only: ~10000 правил
 npm run measure:pac
 ```
 

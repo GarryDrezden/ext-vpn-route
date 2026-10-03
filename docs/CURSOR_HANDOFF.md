@@ -3,13 +3,14 @@
 ## Сейчас
 
 - Ветка: `main`
-- HEAD: `0a7830a8a06f9ee5da0f1468f53d7f2e2d11e3dc`. Ничего после него не коммитилось.
+- Checkpoint commit `01b9212` (Phase 0A–2). Phase 3 поверх него не закоммичен.
 - Phase 0A: **PASS** в Yandex Browser и Chrome.
 - Phase 0B: **PASS в Yandex Browser**. Chrome намеренно не тестировался.
-- Phase 1: доменный слой реализован.
-- Phase 2: PAC compiler реализован, через `chrome.proxy` не применяется.
-- `npm test`: 163 теста, все PASS (107 Phase 1, 56 Phase 2). Браузерной проверки у Phase 1 и 2 нет.
-- Phase 3 не начат.
+- Phase 1: **PASS, автоматические тесты** (доменный слой).
+- Phase 2: **PASS, автоматические тесты** (PAC compiler).
+- Phase 3: production MV3 extension. Автоматические тесты PASS, **ручная проверка в Yandex ожидается** (`docs/phase3-acceptance.md`).
+- `npm test`: 220 тестов, все PASS: 107 domain, 56 PAC, 57 extension.
+- `dist/extension` собран с normal fixture.
 
 ## Phase 0A — PASS
 
@@ -118,12 +119,39 @@ PAC исполняется в `node:vm`. Обращение к DNS-функци�
 
 Lookup около 3 µs в vm Node и практически не зависит от числа правил.
 
+## Phase 3 — production extension runtime
+
+Код: `src/extension/`. Подробно: `docs/phase3-extension-runtime.md`. Проверка: `docs/phase3-acceptance.md`.
+
+- Цепочка: fixture `state/smoke-state.js` (revision 3001; `youtube.com` и `googlevideo.com` → VPN, `example.com` ExactHost → Direct, по умолчанию Direct) → `compilePacScript` с endpoint из `runtime/config.js` (`127.0.0.1:17891`, Phase 0 logger) → `proxy.settings.set` с `mandatory: true` → read-back.
+- Production extension ID: `lfaekfalhkgmbfdjjlfcalanhijeaien`. Отличается от spike, приватный ключ не сохранён.
+- Permissions: `proxy`, `storage`.
+- Сборка: `npm run build:extension` собирает `dist/extension` (в `.gitignore`), раскладка повторяет `src/`. `npm run build:extension:large` — dev-only, 10000 правил, revision 3999, PAC ~382 KB.
+- `runtime/proxy-controller.js` — state machine, chrome API передаются явно:
+  - статусы: `IDLE`, `APPLYING`, `APPLIED`, `NOT_APPLIED`, `ERROR`, `CONFLICT`, `NOT_CONTROLLABLE`, `UNAVAILABLE`;
+  - `active.pac`: `CURRENT`, `PREVIOUS`, `UNRECOGNIZED`, `NONE`, `UNKNOWN`.
+- Чужая proxy-политика не перезаписывается.
+- `APPLIED` ставится только после read-back: `controlled_by_this_extension`, `pac_script`, `mandatory`, совпадение `data` (`data_match`) или отсутствие `data` (`data_unavailable`).
+- Ошибка compile, `set` или read-back не очищает прокси и не ставит DIRECT. Last known good PAC остаётся и показывается как `PREVIOUS`. Без PAC: `ERROR` и «routing is NOT protected».
+- Clear выполняется только по кнопке.
+- Apply срабатывает на `onInstalled`, `onStartup` и по кнопке Reapply. Polling нет.
+- В storage хранится только диагностика (`vpnRouteDiagnostics`).
+
+Тесты (`tests/extension/`):
+
+- `proxy-controller.test.js` — state machine на fake `chrome.proxy`.
+- `background.test.js` — service worker с mock `chrome` в callback-стиле, включая `runtime.lastError` и фильтр отправителя.
+- `build.test.js` — состав сборки, manifest, ID, импорты, запреты, fixtures, 16 вариантов испорченной сборки.
+
+Мутационная проверка: 13 внесённых ошибок в controller, adapter, worker и build ловятся.
+
 ## Файлы
 
 - `spike/` — Phase 0, в продукт не переносится: `extension/`, `socks5-logger/`, `native-host/`, `native-host-tests/`.
 - `src/domain/browser-routing/`, `tests/domain/browser-routing/` — Phase 1.
 - `src/pac/`, `tests/pac/`, `scripts/measure-pac.js` — Phase 2.
-- `docs/phase0-acceptance.md`, `docs/phase0b-acceptance.md`, `docs/browser-routing-contract-v1.md`, `docs/pac-compiler-v1.md`, `docs/examples/`.
+- `src/extension/`, `tests/extension/`, `scripts/build-extension.js`, `scripts/large-fixture.js`, `scripts/extension-id.js` — Phase 3. `dist/` генерируется.
+- `docs/phase0-acceptance.md`, `docs/phase0b-acceptance.md`, `docs/browser-routing-contract-v1.md`, `docs/pac-compiler-v1.md`, `docs/phase3-extension-runtime.md`, `docs/phase3-acceptance.md`, `docs/examples/`.
 
 ## Автоматические проверки
 
@@ -131,6 +159,8 @@ Lookup около 3 µs в vm Node и практически не зависит
 
 ```text
 npm test
+npm run build:extension
+dotnet build spike\socks5-logger\Socks5Logger.csproj
 dotnet build spike\native-host\SelectiveVpnRouter.NativeHost.Spike.csproj -c Release
 dotnet build spike\native-host-tests\NativeHostProtocolTests.csproj -c Release
 dotnet spike\native-host-tests\bin\Release\net8.0\NativeHostProtocolTests.dll spike\native-host\bin\Release\net8.0\SelectiveVpnRouter.NativeHost.Spike.exe
@@ -142,8 +172,9 @@ dotnet run --project spike\socks5-logger\Socks5Logger.csproj -- --self-test
 - IDNA зависит от реализации `URL` в runtime. Канонические ASCII-формы обычных доменов совпадают, но для экзотических Unicode-символов Node и конкретная версия Chromium теоретически могут разойтись. Контракт требует, чтобы по проводу ходил уже canonical ASCII.
 - Корректность Punycode в метках `xn--` проверяет `URL` парсер runtime, своего декодера нет.
 - Однометочные host и TLD-правила (`ru`) допустимы. Public Suffix List не применяется; выбор «домен целиком» для UI — задача будущего popup.
-- В браузерном runtime доменный модуль и compiler ещё не загружались, только в Node.
-- Сгенерированный PAC исполнялся только в `node:vm`, не в PAC-движке Chromium. В браузере не проверено: передаёт ли Chromium IPv6 host со скобками и как ведёт себя inline PAC размером ~315 KiB.
+- Production extension, а с ним доменный модуль и compiler в браузерном runtime, проверены только в Node: в Yandex проверка ожидается.
+- Production PAC пока исполнялся только в `node:vm`. Приём ~382 KB inline PAC и поведение `get()` с `data` в Yandex подтверждает acceptance F. Как Chromium передаёт IPv6 host, не проверено.
+- Состояние — фиксированный fixture, `scope: "regular"`, инкогнито не настраивается.
 - Неклассифицируемый host идёт в VPN даже при `defaultRoute = Direct` (fail-closed).
 - Phase 0B проверен только `sendNativeMessage`; долгоживущий `connectNative` в браузере не проверялся.
 
@@ -159,5 +190,5 @@ dotnet run --project spike\socks5-logger\Socks5Logger.csproj -- --self-test
 
 ## Не начато
 
-- Phase 3 и дальше: применение PAC через `chrome.proxy`, production Native Messaging, IPC с Service, ExplicitBrowserProxy, VPN-side DNS, UI правил, persistence, TabDock, Portable Bootstrap.
+- Phase 4 и дальше: состояние от Service через production Native Messaging (getState/upsert/delete), IPC с Service, ExplicitBrowserProxy, VPN-side DNS, UI правил, TabDock, Portable Bootstrap.
 - Изменения `Vpn-gateway`.

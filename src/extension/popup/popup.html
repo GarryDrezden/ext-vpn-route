@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>VPN Route</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>VPN Route</h1>
+    <p class="subtitle">Browser Routing — Phase 3</p>
+  </header>
+
+  <section>
+    <dl>
+      <dt>Extension ID</dt><dd id="extension-id">—</dd>
+      <dt>Proxy API</dt><dd id="proxy-api">—</dd>
+      <dt>Level of control</dt><dd id="level-of-control">—</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>State</h2>
+    <dl>
+      <dt>Fixture</dt><dd id="fixture">—</dd>
+      <dt>Schema version</dt><dd id="state-schema">—</dd>
+      <dt>Revision</dt><dd id="state-revision">—</dd>
+      <dt>Default route</dt><dd id="state-default">—</dd>
+      <dt>Enabled rules</dt><dd id="state-rules">—</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>PAC</h2>
+    <dl>
+      <dt>Compile status</dt><dd id="compile-status">—</dd>
+      <dt>Compiled revision</dt><dd id="compile-revision">—</dd>
+      <dt>Byte size</dt><dd id="compile-size">—</dd>
+      <dt>Endpoint</dt><dd id="compile-endpoint">—</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>Applied</h2>
+    <dl>
+      <dt>Status</dt><dd id="status">—</dd>
+      <dt>Applied revision</dt><dd id="applied-revision">—</dd>
+      <dt>Active PAC</dt><dd id="active-pac">—</dd>
+      <dt>Mode</dt><dd id="active-mode">—</dd>
+      <dt>Mandatory</dt><dd id="active-mandatory">—</dd>
+      <dt>Read-back</dt><dd id="active-verification">—</dd>
+      <dt>Last operation</dt><dd id="last-operation">—</dd>
+      <dt>Last error</dt><dd id="last-error">—</dd>
+      <dt>Last proxy error</dt><dd id="last-proxy-error">—</dd>
+    </dl>
+  </section>
+
+  <div class="buttons">
+    <button id="reapply" type="button">Reapply PAC</button>
+    <button id="clear" type="button">Clear extension proxy</button>
+    <button id="refresh" type="button">Refresh status</button>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

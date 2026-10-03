@@ -1,6 +1,6 @@
 # Phase 0 spike
 
-Временный код feasibility-фазы. Это не VPN и не продуктовое расширение. Phase 0A — PASS в Yandex и Chrome, Phase 0B — PASS в Yandex. Продуктовый код живёт в `src/` и отсюда не импортирует.
+Временный код feasibility-фазы. Это не VPN и не продуктовое расширение. Phase 0A — PASS в Yandex и Chrome, Phase 0B — PASS в Yandex. Продуктовый код живёт в `src/` и отсюда не импортирует. Production extension (`src/extension`, ID `lfaekfalhkgmbfdjjlfcalanhijeaien`) — отдельное расширение со своим ID. При одновременной проверке spike надо выключить: оба управляют прокси.
 
 `register-native-host.ps1` по умолчанию пишет только `HKCU\Software\Google\Chrome\NativeMessagingHosts\...`: текущему Yandex этого достаточно по факту, Chrome — по документации (в Chrome Phase 0B не проверялся).
 
