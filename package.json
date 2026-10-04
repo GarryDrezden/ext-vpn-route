@@ -14,6 +14,7 @@
     "build:extension:native": "node scripts/build-extension.js --mode=native",
     "build:extension:large": "node scripts/build-extension.js --fixture=large",
     "build:native-host": "node scripts/build-native-host.js",
-    "test:native-host": "dotnet test tests/native-host/SelectiveVpnRouter.NativeHost.Tests.csproj -c Release --nologo"
+    "test:native-host": "dotnet test tests/native-host/SelectiveVpnRouter.NativeHost.Tests.csproj -c Release --nologo",
+    "test:e2e": "node --test --test-timeout=600000 tests/e2e/service-native-host.e2e.js"
   }
 }

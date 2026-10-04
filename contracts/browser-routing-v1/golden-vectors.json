@@ -1,0 +1,216 @@
+{
+  "contract": "BrowserRoutingStateV1",
+  "vectorsVersion": 1,
+  "description": "Shared by ext-vpn-route (JS domain layer, reference normalizer) and vpn-gateway (Service validator). A host is accepted by the Service only when canonical === input. Keep both copies byte-identical.",
+  "hosts": [
+    { "input": "example.com", "canonical": "example.com" },
+    { "input": "Example.COM", "canonical": "example.com" },
+    { "input": "example.com.", "canonical": "example.com" },
+    { "input": "  example.com  ", "canonical": "example.com" },
+    { "input": "www.example.com", "canonical": "www.example.com" },
+    { "input": "intranet", "canonical": "intranet" },
+    { "input": "a_b.example.com", "canonical": "a_b.example.com" },
+    { "input": "_dmarc.example.com", "canonical": "_dmarc.example.com" },
+    { "input": "123.example", "canonical": "123.example" },
+    { "input": "a-b--c.example", "canonical": "a-b--c.example" },
+    { "input": "\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444", "canonical": "xn--e1afmkfd.xn--p1ai" },
+    { "input": "xn--e1afmkfd.xn--p1ai", "canonical": "xn--e1afmkfd.xn--p1ai" },
+    { "input": "XN--E1AFMKFD.XN--P1AI", "canonical": "xn--e1afmkfd.xn--p1ai" },
+    { "input": "b\u00fccher.de", "canonical": "xn--bcher-kva.de" },
+    { "input": "xn--bcher-kva.de", "canonical": "xn--bcher-kva.de" },
+    { "input": "B\u00dcCHER.DE", "canonical": "xn--bcher-kva.de" },
+    { "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example", "canonical": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example" },
+    { "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example", "canonical": null },
+    { "input": "", "canonical": null },
+    { "input": "1.2.3.4", "canonical": null },
+    { "input": "127.0.0.1", "canonical": null },
+    { "input": "0x7f", "canonical": null },
+    { "input": "example.123", "canonical": null },
+    { "input": "[::1]", "canonical": null },
+    { "input": "https://example.com", "canonical": null },
+    { "input": "example.com:443", "canonical": null },
+    { "input": "user@example.com", "canonical": null },
+    { "input": "example.com/path", "canonical": null },
+    { "input": "*.example.com", "canonical": null },
+    { "input": "exa mple.com", "canonical": null },
+    { "input": "ex%41mple.com", "canonical": null },
+    { "input": "a..b", "canonical": null },
+    { "input": ".example.com", "canonical": null },
+    { "input": "-bad.example", "canonical": null },
+    { "input": "bad-.example", "canonical": null },
+    { "input": "xn--.example", "canonical": null },
+    { "input": "xn--a.example", "canonical": null }
+  ],
+  "states": [
+    {
+      "name": "valid_empty_direct",
+      "state": { "schemaVersion": 1, "revision": 0, "defaultRoute": "Direct", "rules": [] },
+      "js": { "valid": true, "codes": [] },
+      "service": { "valid": true, "codes": [] }
+    },
+    {
+      "name": "valid_mixed_rules",
+      "state": {
+        "schemaVersion": 1, "revision": 42, "defaultRoute": "VPN",
+        "rules": [
+          { "id": "exact", "name": "Exact", "host": "example.com", "matchType": "ExactHost", "routeMode": "Direct", "enabled": true, "source": "User", "notes": null },
+          { "id": "domain", "name": "Domain", "host": "example.com", "matchType": "DomainAndSubdomains", "routeMode": "VPN", "enabled": true, "source": "User", "notes": "line 1\nline 2\ttab" },
+          { "id": "idn", "name": "\u041f\u0440\u0438\u043c\u0435\u0440", "host": "xn--e1afmkfd.xn--p1ai", "matchType": "DomainAndSubdomains", "routeMode": "Default", "enabled": true, "source": "System" },
+          { "id": "off-copy", "name": "Disabled duplicate host", "host": "example.com", "matchType": "ExactHost", "routeMode": "VPN", "enabled": false, "source": "User", "notes": null }
+        ]
+      },
+      "js": { "valid": true, "codes": [] },
+      "service": { "valid": true, "codes": [] }
+    },
+    {
+      "name": "noncanonical_host_case_and_dot",
+      "state": {
+        "schemaVersion": 1, "revision": 1, "defaultRoute": "Direct",
+        "rules": [ { "id": "r1", "name": "R", "host": "Example.COM.", "matchType": "ExactHost", "routeMode": "VPN", "enabled": true, "source": "User", "notes": null } ]
+      },
+      "js": { "valid": true, "codes": [] },
+      "service": { "valid": false, "codes": ["invalid_host"] }
+    },
+    {
+      "name": "noncanonical_unicode_host",
+      "state": {
+        "schemaVersion": 1, "revision": 1, "defaultRoute": "Direct",
+        "rules": [ { "id": "r1", "name": "R", "host": "\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444", "matchType": "DomainAndSubdomains", "routeMode": "VPN", "enabled": true, "source": "User", "notes": null } ]
+      },
+      "js": { "valid": true, "codes": [] },
+      "service": { "valid": false, "codes": ["invalid_host"] }
+    },
+    {
+      "name": "duplicate_conflict",
+      "state": {
+        "schemaVersion": 1, "revision": 3, "defaultRoute": "Direct",
+        "rules": [
+          { "id": "a", "name": "A", "host": "example.com", "matchType": "ExactHost", "routeMode": "VPN", "enabled": true, "source": "User", "notes": null },
+          { "id": "b", "name": "B", "host": "example.com", "matchType": "ExactHost", "routeMode": "VPN", "enabled": true, "source": "User", "notes": null }
+        ]
+      },
+      "js": { "valid": false, "codes": ["conflicting_rules"] },
+      "service": { "valid": false, "codes": ["conflicting_rules"] }
+    },
+    {
+      "name": "conflict_after_normalization",
+      "state": {
+        "schemaVersion": 1, "revision": 3, "defaultRoute": "Direct",
+        "rules": [
+          { "id": "a", "name": "A", "host": "example.com", "matchType": "ExactHost", "routeMode": "VPN", "enabled": true, "source": "User", "notes": null },
+          { "id": "b", "name": "B", "host": "EXAMPLE.com", "matchType": "ExactHost", "routeMode": "Direct", "enabled": true, "source": "User", "notes": null }
+        ]
+      },
+      "js": { "valid": false, "codes": ["conflicting_rules"] },
+      "service": { "valid": false, "codes": ["invalid_host"] }
+    },
+    {
+      "name": "duplicate_rule_id",
+      "state": {
+        "schemaVersion": 1, "revision": 3, "defaultRoute": "Direct",
+        "rules": [
+          { "id": "same", "name": "A", "host": "a.example", "matchType": "ExactHost", "routeMode": "VPN", "enabled": true, "source": "User", "notes": null },
+          { "id": "same", "name": "B", "host": "b.example", "matchType": "ExactHost", "routeMode": "VPN", "enabled": false, "source": "User", "notes": null }
+        ]
+      },
+      "js": { "valid": false, "codes": ["duplicate_rule_id"] },
+      "service": { "valid": false, "codes": ["duplicate_rule_id"] }
+    },
+    {
+      "name": "invalid_enums",
+      "state": {
+        "schemaVersion": 1, "revision": 3, "defaultRoute": "Direct",
+        "rules": [ { "id": "r1", "name": "R", "host": "example.com", "matchType": "Wildcard", "routeMode": "Proxy", "enabled": true, "source": "Yandex", "notes": null } ]
+      },
+      "js": { "valid": false, "codes": ["unknown_match_type", "unknown_route_mode", "unknown_source"] },
+      "service": { "valid": false, "codes": ["unknown_match_type", "unknown_route_mode", "unknown_source"] }
+    },
+    {
+      "name": "invalid_default_route_default",
+      "state": { "schemaVersion": 1, "revision": 0, "defaultRoute": "Default", "rules": [] },
+      "js": { "valid": false, "codes": ["invalid_default_route"] },
+      "service": { "valid": false, "codes": ["invalid_default_route"] }
+    },
+    {
+      "name": "invalid_default_route_case",
+      "state": { "schemaVersion": 1, "revision": 0, "defaultRoute": "DIRECT", "rules": [] },
+      "js": { "valid": false, "codes": ["invalid_default_route"] },
+      "service": { "valid": false, "codes": ["invalid_default_route"] }
+    },
+    {
+      "name": "generation_is_not_a_state_field",
+      "state": { "schemaVersion": 1, "stateGeneration": "9b2f6c1e-1d2a-4f57-9a43-3f2a9d7c1b10", "revision": 0, "defaultRoute": "Direct", "rules": [] },
+      "js": { "valid": false, "codes": ["unknown_field"] },
+      "service": { "valid": false, "codes": ["unknown_field"] }
+    },
+    {
+      "name": "unsupported_schema_version",
+      "state": { "schemaVersion": 2, "revision": 0, "defaultRoute": "Direct", "rules": [] },
+      "js": { "valid": false, "codes": ["unsupported_schema_version"] },
+      "service": { "valid": false, "codes": ["unsupported_schema_version"] }
+    },
+    {
+      "name": "negative_revision",
+      "state": { "schemaVersion": 1, "revision": -1, "defaultRoute": "Direct", "rules": [] },
+      "js": { "valid": false, "codes": ["invalid_revision"] },
+      "service": { "valid": false, "codes": ["invalid_revision"] }
+    },
+    {
+      "name": "fractional_revision",
+      "state": { "schemaVersion": 1, "revision": 1.5, "defaultRoute": "Direct", "rules": [] },
+      "js": { "valid": false, "codes": ["invalid_revision"] },
+      "service": { "valid": false, "codes": ["invalid_revision"] }
+    },
+    {
+      "name": "unsafe_revision",
+      "state": { "schemaVersion": 1, "revision": 9007199254740992, "defaultRoute": "Direct", "rules": [] },
+      "js": { "valid": false, "codes": ["invalid_revision"] },
+      "service": { "valid": false, "codes": ["invalid_revision"] }
+    },
+    {
+      "name": "blank_name_bom",
+      "state": {
+        "schemaVersion": 1, "revision": 1, "defaultRoute": "Direct",
+        "rules": [ { "id": "r1", "name": " \ufeff ", "host": "example.com", "matchType": "ExactHost", "routeMode": "VPN", "enabled": true, "source": "User", "notes": null } ]
+      },
+      "js": { "valid": false, "codes": ["invalid_name"] },
+      "service": { "valid": false, "codes": ["invalid_name"] }
+    },
+    {
+      "name": "control_char_in_notes",
+      "state": {
+        "schemaVersion": 1, "revision": 1, "defaultRoute": "Direct",
+        "rules": [ { "id": "r1", "name": "R", "host": "example.com", "matchType": "ExactHost", "routeMode": "VPN", "enabled": true, "source": "User", "notes": "bell\u0007" } ]
+      },
+      "js": { "valid": false, "codes": ["invalid_notes"] },
+      "service": { "valid": false, "codes": ["invalid_notes"] }
+    },
+    {
+      "name": "unknown_rule_field",
+      "state": {
+        "schemaVersion": 1, "revision": 1, "defaultRoute": "Direct",
+        "rules": [ { "id": "r1", "name": "R", "host": "example.com", "matchType": "ExactHost", "routeMode": "VPN", "enabled": true, "source": "User", "notes": null, "fallback": "DIRECT" } ]
+      },
+      "js": { "valid": false, "codes": ["unknown_field"] },
+      "service": { "valid": false, "codes": ["unknown_field"] }
+    },
+    {
+      "name": "enabled_not_boolean",
+      "state": {
+        "schemaVersion": 1, "revision": 1, "defaultRoute": "Direct",
+        "rules": [ { "id": "r1", "name": "R", "host": "example.com", "matchType": "ExactHost", "routeMode": "VPN", "enabled": "true", "source": "User", "notes": null } ]
+      },
+      "js": { "valid": false, "codes": ["invalid_enabled"] },
+      "service": { "valid": false, "codes": ["invalid_enabled"] }
+    },
+    {
+      "name": "ip_literal_host",
+      "state": {
+        "schemaVersion": 1, "revision": 1, "defaultRoute": "Direct",
+        "rules": [ { "id": "r1", "name": "R", "host": "10.0.0.1", "matchType": "ExactHost", "routeMode": "VPN", "enabled": true, "source": "User", "notes": null } ]
+      },
+      "js": { "valid": false, "codes": ["invalid_host"] },
+      "service": { "valid": false, "codes": ["invalid_host"] }
+    }
+  ]
+}

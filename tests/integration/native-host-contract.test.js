@@ -61,6 +61,33 @@ test("generated manifest has exactly one origin and no wildcard", () => {
   assert.equal(common.includes("chrome-extension://*"), false);
 });
 
+test("Service IPC constants agree between the native host and VPN Route Service", (t) => {
+  const gatewayRoot = process.env.VPN_GATEWAY_ROOT || path.resolve(ROOT, "..", "vpn-gateway");
+  const servicePath = path.join(gatewayRoot, "src/SelectiveVpnRouter.Core/BrowserRouting/BrowserRoutingIpcProtocol.cs");
+  let service;
+  try {
+    service = readFileSync(servicePath, "utf8");
+  } catch {
+    t.skip("vpn-gateway checkout not found at " + gatewayRoot);
+    return;
+  }
+  const host = read("src/native-host/Service/ServiceIpcV1.cs");
+  const constant = (text, name) => {
+    const match = new RegExp("const (?:string|int) " + name + " = ([^;]+);").exec(text);
+    assert.ok(match, name);
+    return match[1].trim();
+  };
+  for (const name of ["PipeName", "Version", "MaxRequestBytes", "MaxResponseBytes", "GetManifest", "GetPage"]) {
+    assert.equal(constant(host, name), constant(service, name), name);
+  }
+  for (const code of ["browser_state_unavailable", "snapshot_changed", "invalid_cursor"]) {
+    assert.ok(service.includes("\"" + code + "\""), "Service code " + code);
+    assert.ok(host.includes("ProtocolV1.Errors.") || host.includes("\"" + code + "\""), "host forwards " + code);
+  }
+  assert.match(service, /MaxPagesPerSnapshot = 160;/);
+  assert.match(read("src/extension/state/native-state-provider.js"), /maxPages: 160,/);
+});
+
 test("manifest and executable stay outside source control", () => {
   const ignore = read(".gitignore");
   assert.match(ignore, /^dist\/$/m);

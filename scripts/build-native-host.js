@@ -9,6 +9,7 @@
 //   --tests         additionally run the xUnit suite against the published binary
 
 import { execFileSync, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +22,17 @@ export const HOST_EXE = path.join(HOST_OUT, HOST_EXE_NAME);
 export const ALLOWED_ORIGIN = "chrome-extension://lfaekfalhkgmbfdjjlfcalanhijeaien/";
 const PROJECT = path.join(ROOT, "src", "native-host", "SelectiveVpnRouter.NativeHost.csproj");
 const TEST_PROJECT = path.join(ROOT, "tests", "native-host", "SelectiveVpnRouter.NativeHost.Tests.csproj");
+export const TEST_PIPE_VARIABLE = "VPN_ROUTE_TEST_SERVICE_PIPE";
+
+/** A private pipe name in the host's test namespace (the real Service may own the production name). */
+export function newTestPipeName() {
+  return "SelectiveVpnRouter.BrowserRouting.Test." + randomBytes(16).toString("hex");
+}
+
+/** Environment for a host process that must talk to `pipeName` (or to nothing) instead of the real Service. */
+export function hostEnv(pipeName) {
+  return { ...process.env, [TEST_PIPE_VARIABLE]: pipeName };
+}
 
 function publish() {
   rmSync(HOST_OUT, { recursive: true, force: true });
@@ -53,7 +65,7 @@ function frame(message) {
   return Buffer.concat([header, payload]);
 }
 
-function parseFrames(buffer) {
+function parseFrames(buffer, sizes = []) {
   const messages = [];
   let offset = 0;
   while (offset < buffer.length) {
@@ -62,15 +74,16 @@ function parseFrames(buffer) {
     offset += 4;
     if (buffer.length - offset < length) throw new Error("stdout ends with a partial payload");
     messages.push(JSON.parse(buffer.subarray(offset, offset + length).toString("utf8")));
+    sizes.push(length);
     offset += length;
   }
   return messages;
 }
 
 /** Runs the host the way Chromium does on Windows: origin + --parent-window, framed stdin. */
-export function runHost(messages, args = [ALLOWED_ORIGIN, "--parent-window=0"], exe = HOST_EXE) {
+export function runHost(messages, args = [ALLOWED_ORIGIN, "--parent-window=0"], exe = HOST_EXE, env = process.env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(exe, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    const child = spawn(exe, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env });
     const stdout = [];
     const stderr = [];
     const timer = setTimeout(() => { child.kill(); reject(new Error("host did not exit in time")); }, 20000);
@@ -80,7 +93,9 @@ export function runHost(messages, args = [ALLOWED_ORIGIN, "--parent-window=0"], 
     child.on("close", (code) => {
       clearTimeout(timer);
       try {
-        resolve({ code, responses: parseFrames(Buffer.concat(stdout)), stderr: Buffer.concat(stderr).toString("utf8") });
+        const sizes = [];
+        const responses = parseFrames(Buffer.concat(stdout), sizes);
+        resolve({ code, responses, sizes, stderr: Buffer.concat(stderr).toString("utf8") });
       } catch (error) {
         reject(error);
       }
@@ -91,12 +106,13 @@ export function runHost(messages, args = [ALLOWED_ORIGIN, "--parent-window=0"], 
 }
 
 /** chrome.runtime stand-in that starts a new host process per message, like sendNativeMessage. */
-function processRuntime(exe) {
+export function processRuntime(exe, env = process.env, observe = () => {}) {
   const runtime = {
     lastError: undefined,
     sendNativeMessage(hostName, message, callback) {
-      runHost([message], [ALLOWED_ORIGIN, "--parent-window=0"], exe).then(
+      runHost([message], [ALLOWED_ORIGIN, "--parent-window=0"], exe, env).then(
         (result) => {
+          observe(message, result);
           if (result.responses.length === 0) {
             runtime.lastError = { message: "Native host has exited." };
             try { callback(undefined); } finally { runtime.lastError = undefined; }
@@ -119,29 +135,37 @@ function check(condition, message) {
 }
 
 export async function smoke(exe = HOST_EXE) {
+  // Deterministic regardless of a running Service: the host is pointed at an unused test pipe.
+  const env = hostEnv(newTestPipeName());
   const ping = { protocolVersion: 1, requestId: "smoke-ping", command: "ping" };
-  const getState = { protocolVersion: 1, requestId: "smoke-state", command: "getState" };
+  const manifest = { protocolVersion: 1, requestId: "smoke-manifest", command: "getStateManifest" };
+  const legacy = { protocolVersion: 1, requestId: "smoke-legacy", command: "getState" };
 
-  const ok = await runHost([ping, getState, { protocolVersion: 1, requestId: "smoke-x", command: "exec" }], undefined, exe);
+  const ok = await runHost([ping, manifest, legacy, { protocolVersion: 1, requestId: "smoke-x", command: "exec" }], undefined, exe, env);
   check(ok.code === 0, "clean EOF exit code 0");
-  check(ok.responses.length === 3, "three framed responses, stdout contains frames only");
+  check(ok.responses.length === 4, "four framed responses, stdout contains frames only");
   check(ok.responses[0].ok === true && ok.responses[0].result.command === "pong" &&
     ok.responses[0].result.host === "SelectiveVpnRouter.NativeHost" && ok.responses[0].result.protocolVersion === 1,
   "ping -> pong (host " + ok.responses[0].result.host + " " + ok.responses[0].result.hostVersion + ")");
   check(ok.responses[0].requestId === "smoke-ping", "requestId preserved");
   check(ok.responses[1].ok === false && ok.responses[1].error.code === "service_unavailable",
-    "getState -> service_unavailable (no Service connector in Phase 4)");
-  check(ok.responses[2].error.code === "unknown_command", "arbitrary command -> unknown_command");
+    "getStateManifest without a Service pipe -> service_unavailable");
+  check(ok.responses[2].error.code === "unknown_command", "removed Phase 4 getState -> unknown_command");
+  check(ok.responses[3].error.code === "unknown_command", "arbitrary command -> unknown_command");
   check(ok.stderr.includes("[native-host]"), "diagnostics go to stderr");
 
-  const wrong = await runHost([ping], ["chrome-extension://onodojebmdbcndjelgfhoiffeojngmbd/"], exe);
+  const wrong = await runHost([ping], ["chrome-extension://onodojebmdbcndjelgfhoiffeojngmbd/"], exe, env);
   check(wrong.code === 4 && wrong.responses.length === 1 && wrong.responses[0].error.code === "forbidden_origin",
     "spike extension origin -> forbidden_origin, exit 4");
-  const missing = await runHost([ping], [], exe);
+  const missing = await runHost([ping], [], exe, env);
   check(missing.code === 4, "missing origin -> exit 4");
 
-  const provider = createNativeStateProvider({ runtime: processRuntime(exe), hostName: "com.vpnroute.browser" });
-  const fetched = await provider.getState();
+  const rejected = await runHost([manifest], undefined, exe, hostEnv("SelectiveVpnRouter"));
+  check(rejected.responses[0].error.code === "service_unavailable" && rejected.stderr.includes("override rejected"),
+    "test pipe override outside the test namespace is rejected, no connection");
+
+  const provider = createNativeStateProvider({ runtime: processRuntime(exe, env), hostName: "com.vpnroute.browser" });
+  const fetched = await provider.getSnapshot();
   check(fetched.ok === false && fetched.error.code === "host_error" && fetched.error.hostErrorCode === "service_unavailable" &&
     fetched.transport === "AVAILABLE" && fetched.service === "UNAVAILABLE",
   "extension NativeStateProvider over the real host: transport AVAILABLE, Service UNAVAILABLE");

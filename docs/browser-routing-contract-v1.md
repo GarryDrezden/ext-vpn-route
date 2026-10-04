@@ -37,6 +37,8 @@
 
 `revision` — JSON-число, а не строка: целого, безопасного для JavaScript (`Number.MAX_SAFE_INTEGER`), хватает для любой реальной истории изменений, и его однозначно читают JavaScript, .NET (`long`) и JSON. Это счётчик, а не время: сравнение `revision` между двумя снимками говорит, какой новее, и не зависит от часов.
 
+Сравнивать `revision` имеет смысл только внутри одной lineage. Lineage задаёт `stateGeneration`, UUID от Service. Он меняется при reset состояния, после которого `revision` начинается заново. `stateGeneration` не входит в `BrowserRoutingStateV1`: он идёт рядом, в identity snapshot `{stateGeneration, revision}`, на транспортном уровне (`docs/service-ipc-browser-routing-v1.md`, `docs/native-messaging-protocol-v1.md`). Политика сравнения описана в `docs/phase5-service-integration.md`.
+
 ## BrowserRoutingRule
 
 ```json

@@ -7,7 +7,11 @@ namespace VpnRoute.NativeHost.Protocol;
 
 internal readonly record struct DispatchResult(byte[] Response, string Command, string Outcome);
 
-/// <summary>Validates a v1 request envelope and runs one of the fixed commands.</summary>
+/// <summary>
+/// Validates a v1 request envelope and runs one of the fixed commands. Each state command maps to
+/// exactly one bounded Service IPC call; the host relays the Service result, it never assembles,
+/// caches or edits state.
+/// </summary>
 internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeSpan serviceTimeout)
 {
     public static readonly TimeSpan DefaultServiceTimeout = TimeSpan.FromSeconds(3);
@@ -19,10 +23,17 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         CommentHandling = JsonCommentHandling.Disallow
     };
 
-    private static readonly HashSet<string> EnvelopeFields = new(StringComparer.Ordinal)
+    private static readonly JsonDocumentOptions ResultJsonOptions = new() { MaxDepth = 8 };
+
+    private static readonly HashSet<string> BaseFields = new(StringComparer.Ordinal) { "protocolVersion", "requestId", "command" };
+    private static readonly HashSet<string> PageFields = new(StringComparer.Ordinal)
     {
-        "protocolVersion", "requestId", "command"
+        "protocolVersion", "requestId", "command", "stateGeneration", "revision", "startIndex"
     };
+
+    private static readonly string[] ManifestResultFields =
+        ["schemaVersion", "stateGeneration", "revision", "defaultRoute", "ruleCount", "pageBudgetBytes", "browserProxy"];
+    private static readonly string[] PageResultFields = ["stateGeneration", "revision", "startIndex", "nextIndex", "rules"];
 
     public async Task<DispatchResult> DispatchAsync(byte[] payload, CancellationToken cancellationToken)
     {
@@ -42,7 +53,7 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         using (document)
         {
             var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object || !HasOnlyKnownUniqueFields(root))
+            if (root.ValueKind != JsonValueKind.Object || !HasOnlyFields(root, PageFields))
                 return Fail(null, "-", ProtocolV1.Errors.InvalidRequest);
 
             var requestId = ReadRequestId(root);
@@ -58,10 +69,15 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
             if (!root.TryGetProperty("command", out var commandElement) || commandElement.ValueKind != JsonValueKind.String)
                 return Fail(requestId, "-", ProtocolV1.Errors.InvalidRequest);
 
-            return commandElement.GetString() switch
+            var command = commandElement.GetString();
+            if ((command is ProtocolV1.Commands.Ping or ProtocolV1.Commands.GetStateManifest) && !HasOnlyFields(root, BaseFields))
+                return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+
+            return command switch
             {
                 ProtocolV1.Commands.Ping => Ping(requestId),
-                ProtocolV1.Commands.GetState => await GetStateAsync(requestId, cancellationToken).ConfigureAwait(false),
+                ProtocolV1.Commands.GetStateManifest => await ManifestAsync(requestId, cancellationToken).ConfigureAwait(false),
+                ProtocolV1.Commands.GetStatePage => await PageAsync(requestId, root, cancellationToken).ConfigureAwait(false),
                 _ => Fail(requestId, "unknown", ProtocolV1.Errors.UnknownCommand)
             };
         }
@@ -81,62 +97,204 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         return new DispatchResult(response, ProtocolV1.Commands.Ping, "ok");
     }
 
-    private async Task<DispatchResult> GetStateAsync(string requestId, CancellationToken cancellationToken)
+    private async Task<DispatchResult> ManifestAsync(string requestId, CancellationToken cancellationToken)
     {
-        const string command = ProtocolV1.Commands.GetState;
-        ServiceStateSnapshot snapshot;
+        const string command = ProtocolV1.Commands.GetStateManifest;
+        var call = await CallAsync(requestId, command, token => serviceClient.GetManifestAsync(requestId, token), cancellationToken)
+            .ConfigureAwait(false);
+        if (call.Failure is { } failure)
+            return failure;
+        return IsValidManifest(call.Result!)
+            ? Relay(requestId, command, call.Result!)
+            : Fail(requestId, command, ProtocolV1.Errors.InvalidServiceResponse);
+    }
+
+    private async Task<DispatchResult> PageAsync(string requestId, JsonElement root, CancellationToken cancellationToken)
+    {
+        const string command = ProtocolV1.Commands.GetStatePage;
+        if (!HasExactFields(root, PageFields))
+            return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+        var generation = root.GetProperty("stateGeneration");
+        if (generation.ValueKind != JsonValueKind.String || !IsGeneration(generation.GetString()))
+            return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+        if (!TryReadInteger(root.GetProperty("revision"), ProtocolV1.MaxRevision, out var revision) ||
+            !TryReadInteger(root.GetProperty("startIndex"), ProtocolV1.MaxRules, out var startIndex))
+            return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+
+        var identity = new SnapshotIdentity(generation.GetString()!, revision);
+        var call = await CallAsync(requestId, command,
+            token => serviceClient.GetPageAsync(requestId, identity, (int)startIndex, token), cancellationToken).ConfigureAwait(false);
+        if (call.Failure is { } failure)
+            return failure;
+        return IsValidPage(call.Result!, identity, (int)startIndex)
+            ? Relay(requestId, command, call.Result!)
+            : Fail(requestId, command, ProtocolV1.Errors.InvalidServiceResponse);
+    }
+
+    private readonly record struct ServiceCall(byte[]? Result, DispatchResult? Failure);
+
+    private async Task<ServiceCall> CallAsync(
+        string requestId, string command, Func<CancellationToken, Task<ServiceReply>> operation, CancellationToken cancellationToken)
+    {
+        ServiceReply reply;
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(serviceTimeout);
-            snapshot = await serviceClient.GetStateAsync(timeout.Token)
-                .WaitAsync(serviceTimeout, cancellationToken)
-                .ConfigureAwait(false);
+            reply = await operation(timeout.Token).WaitAsync(serviceTimeout, cancellationToken).ConfigureAwait(false);
         }
         catch (ServiceUnavailableException)
         {
-            return Fail(requestId, command, ProtocolV1.Errors.ServiceUnavailable);
+            return new(null, Fail(requestId, command, ProtocolV1.Errors.ServiceUnavailable));
+        }
+        catch (ServiceUntrustedException)
+        {
+            return new(null, Fail(requestId, command, ProtocolV1.Errors.ServiceUntrusted));
+        }
+        catch (InvalidServiceResponseException)
+        {
+            return new(null, Fail(requestId, command, ProtocolV1.Errors.InvalidServiceResponse));
         }
         catch (Exception ex) when (ex is TimeoutException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
-            return Fail(requestId, command, ProtocolV1.Errors.ServiceTimeout);
+            return new(null, Fail(requestId, command, ProtocolV1.Errors.ServiceTimeout));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return Fail(requestId, command, ProtocolV1.Errors.ServiceError, ex.GetType().Name);
+            return new(null, Fail(requestId, command, ProtocolV1.Errors.ServiceError, ex.GetType().Name));
         }
 
-        if (snapshot is null || snapshot.State.ValueKind != JsonValueKind.Object
-            || snapshot.ProxyEndpoint is null || !IsLoopbackEndpoint(snapshot.ProxyEndpoint))
-            return Fail(requestId, command, ProtocolV1.Errors.InvalidServiceResponse);
-
-        var response = ResponseWriter.Success(requestId, writer =>
+        if (reply is null)
+            return new(null, Fail(requestId, command, ProtocolV1.Errors.InvalidServiceResponse));
+        if (reply.ErrorCode is { } code)
         {
-            writer.WriteStartObject();
-            writer.WritePropertyName("state");
-            snapshot.State.WriteTo(writer);
-            writer.WriteStartObject("proxyEndpoint");
-            writer.WriteString("host", snapshot.ProxyEndpoint.Host);
-            writer.WriteNumber("port", snapshot.ProxyEndpoint.Port);
-            writer.WriteEndObject();
-            writer.WriteEndObject();
-        });
+            var forwarded = ServiceIpcV1.ForwardedErrors.Contains(code) ? code : ProtocolV1.Errors.ServiceError;
+            return new(null, Fail(requestId, command, forwarded, forwarded == code ? null : "service code"));
+        }
+        if (reply.Result is null || reply.Result.Length > ServiceIpcV1.MaxResponseBytes)
+            return new(null, Fail(requestId, command, ProtocolV1.Errors.InvalidServiceResponse));
+        return new(reply.Result, null);
+    }
 
+    private static DispatchResult Relay(string requestId, string command, byte[] result)
+    {
+        var response = ResponseWriter.SuccessRaw(requestId, result);
         if (response.Length > ProtocolV1.MaxResponseBytes)
             return Fail(requestId, command, ProtocolV1.Errors.ResponseTooLarge);
+        return new DispatchResult(response, command, "ok " + response.Length.ToString(CultureInfo.InvariantCulture) + "B");
+    }
 
-        return new DispatchResult(response, command, "ok");
+    /// <summary>Envelope-level checks of a manifest; rule contents are validated by the extension.</summary>
+    private static bool IsValidManifest(byte[] result)
+    {
+        using var document = ParseResult(result);
+        if (document is null)
+            return false;
+        var root = document.RootElement;
+        if (!HasExactFields(root, ManifestResultFields))
+            return false;
+        if (root.GetProperty("stateGeneration") is not { ValueKind: JsonValueKind.String } generation || !IsGeneration(generation.GetString()))
+            return false;
+        if (!TryReadInteger(root.GetProperty("revision"), ProtocolV1.MaxRevision, out _) ||
+            !TryReadInteger(root.GetProperty("ruleCount"), ProtocolV1.MaxRules, out _) ||
+            !TryReadInteger(root.GetProperty("pageBudgetBytes"), ServiceIpcV1.MaxResponseBytes, out _))
+            return false;
+
+        var proxy = root.GetProperty("browserProxy");
+        if (proxy.ValueKind != JsonValueKind.Object || !HasExactFields(proxy, ["status", "endpoint"]))
+            return false;
+        var status = proxy.GetProperty("status");
+        var endpoint = proxy.GetProperty("endpoint");
+        return status.ValueKind == JsonValueKind.String && status.GetString() switch
+        {
+            "Unavailable" => endpoint.ValueKind == JsonValueKind.Null,
+            "Ready" => endpoint.ValueKind == JsonValueKind.Object && HasExactFields(endpoint, ["host", "port"]) &&
+                endpoint.GetProperty("host").ValueKind == JsonValueKind.String &&
+                TryReadInteger(endpoint.GetProperty("port"), 65535, out var port) &&
+                IsLoopbackEndpoint(endpoint.GetProperty("host").GetString()!, (int)port),
+            _ => false
+        };
+    }
+
+    private static bool IsValidPage(byte[] result, SnapshotIdentity identity, int startIndex)
+    {
+        using var document = ParseResult(result);
+        if (document is null)
+            return false;
+        var root = document.RootElement;
+        if (!HasExactFields(root, PageResultFields))
+            return false;
+        if (root.GetProperty("stateGeneration").ValueKind != JsonValueKind.String ||
+            root.GetProperty("stateGeneration").GetString() != identity.StateGeneration)
+            return false;
+        if (!TryReadInteger(root.GetProperty("revision"), ProtocolV1.MaxRevision, out var revision) || revision != identity.Revision)
+            return false;
+        if (!TryReadInteger(root.GetProperty("startIndex"), ProtocolV1.MaxRules, out var start) || start != startIndex)
+            return false;
+        var rules = root.GetProperty("rules");
+        if (rules.ValueKind != JsonValueKind.Array || rules.GetArrayLength() == 0)
+            return false;
+        var next = root.GetProperty("nextIndex");
+        return next.ValueKind == JsonValueKind.Null ||
+            (TryReadInteger(next, ProtocolV1.MaxRules, out var nextIndex) && nextIndex == startIndex + rules.GetArrayLength());
+    }
+
+    private static JsonDocument? ParseResult(byte[] result)
+    {
+        try
+        {
+            var document = JsonDocument.Parse(result, ResultJsonOptions);
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
+                return document;
+            document.Dispose();
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static DispatchResult Fail(string? requestId, string command, string code, string? detail = null) =>
         new(ResponseWriter.Error(requestId, code), command, detail is null ? code : $"{code} ({detail})");
 
-    private static bool HasOnlyKnownUniqueFields(JsonElement root)
+    private static bool HasOnlyFields(JsonElement root, HashSet<string> allowed)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var property in root.EnumerateObject())
         {
-            if (!EnvelopeFields.Contains(property.Name) || !seen.Add(property.Name))
+            if (!allowed.Contains(property.Name) || !seen.Add(property.Name))
+                return false;
+        }
+        return true;
+    }
+
+    private static bool HasExactFields(JsonElement element, IReadOnlyCollection<string> fields)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!fields.Contains(property.Name) || !seen.Add(property.Name))
+                return false;
+        }
+        return seen.Count == fields.Count;
+    }
+
+    private static bool TryReadInteger(JsonElement element, long max, out long value)
+    {
+        value = 0;
+        return element.ValueKind == JsonValueKind.Number && element.TryGetInt64(out value) && value >= 0 && value <= max;
+    }
+
+    internal static bool IsGeneration(string? value)
+    {
+        if (value is null || value.Length != 36)
+            return false;
+        for (var i = 0; i < value.Length; i++)
+        {
+            var c = value[i];
+            var dash = i is 8 or 13 or 18 or 23;
+            if (dash ? c != '-' : !(c is >= '0' and <= '9' or >= 'a' and <= 'f'))
                 return false;
         }
         return true;
@@ -158,11 +316,11 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         return value;
     }
 
-    internal static bool IsLoopbackEndpoint(ProxyEndpoint endpoint)
+    internal static bool IsLoopbackEndpoint(string host, int port)
     {
-        if (endpoint.Port is < 1 or > 65535 || endpoint.Host is null)
+        if (port is < 1 or > 65535)
             return false;
-        var parts = endpoint.Host.Split('.');
+        var parts = host.Split('.');
         if (parts.Length != 4)
             return false;
         foreach (var part in parts)

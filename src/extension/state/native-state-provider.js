@@ -1,13 +1,28 @@
-import { createBrowserRoutingSnapshot } from "./snapshot.js";
+import { Limits } from "../../domain/browser-routing/constants.js";
+import { STATE_GENERATION, createBrowserRoutingSnapshot, validateBrowserProxy } from "./snapshot.js";
 
 /**
- * Fetches BrowserRoutingSnapshot from the VPN Route native host with one
- * chrome.runtime.sendNativeMessage call per request (no long-lived port, no polling).
- * It only reads and validates state: it never applies PAC, writes proxy settings or stores rules.
+ * Fetches a BrowserRoutingSnapshot from the VPN Route native host: one getStateManifest
+ * followed by getStatePage requests for the same {stateGeneration, revision}, each a single
+ * chrome.runtime.sendNativeMessage call (no long-lived port, no polling).
+ * A snapshot is returned only when every page arrived and the assembled state passed
+ * validation; a partial snapshot is never returned. The provider never applies PAC, never
+ * writes proxy settings and never stores rules.
  */
 
 export const NATIVE_PROTOCOL_VERSION = 1;
 export const DEFAULT_NATIVE_TIMEOUT_MS = 5000;
+export const DEFAULT_SNAPSHOT_TIMEOUT_MS = 60000;
+
+export const SnapshotLimits = Object.freeze({
+  maxRules: Limits.maxRules,
+  maxPages: 160,
+  maxPageBudgetBytes: 512 * 1024,
+  /** Page response bytes as re-serialized here; the host enforces the 1 MiB wire limit. */
+  maxPageBytes: 512 * 1024 + 16 * 1024,
+  maxSnapshotBytes: 96 * 1024 * 1024,
+  maxAttempts: 2
+});
 
 export const NativeErrorCode = Object.freeze({
   HostNotFound: "host_not_found",
@@ -19,6 +34,11 @@ export const NativeErrorCode = Object.freeze({
   UnsupportedProtocol: "unsupported_protocol",
   RequestIdMismatch: "request_id_mismatch",
   HostError: "host_error",
+  InvalidManifest: "invalid_manifest",
+  InvalidPage: "invalid_page",
+  LimitExceeded: "limit_exceeded",
+  SnapshotUnstable: "snapshot_unstable",
+  SnapshotTimeout: "snapshot_timeout",
   InvalidSnapshot: "invalid_snapshot",
   InvalidState: "invalid_state",
   InvalidEndpoint: "invalid_endpoint",
@@ -27,11 +47,17 @@ export const NativeErrorCode = Object.freeze({
 
 export const Transport = Object.freeze({ Available: "AVAILABLE", Error: "ERROR" });
 export const ServiceStatus = Object.freeze({ Available: "AVAILABLE", Unavailable: "UNAVAILABLE", Unknown: "UNKNOWN" });
+export const StateStatus = Object.freeze({ Available: "AVAILABLE", Unavailable: "UNAVAILABLE", Invalid: "INVALID", Unknown: "UNKNOWN" });
+export const ProxyReadiness = Object.freeze({ Ready: "READY", Unavailable: "UNAVAILABLE", Unknown: "UNKNOWN" });
 
 const HOST_NAME = /^[a-z0-9_]+(\.[a-z0-9_]+)*$/;
 const ERROR_CODE = /^[a-z0-9_]{1,64}$/;
-const SERVICE_DOWN_CODES = new Set(["service_unavailable", "service_timeout", "service_error"]);
+const SERVICE_DOWN_CODES = new Set(["service_unavailable", "service_timeout", "service_error", "service_untrusted"]);
+const STATE_DOWN_CODES = new Set(["browser_state_unavailable"]);
+const MANIFEST_FIELDS = ["schemaVersion", "stateGeneration", "revision", "defaultRoute", "ruleCount", "pageBudgetBytes", "browserProxy"];
+const PAGE_FIELDS = ["stateGeneration", "revision", "startIndex", "nextIndex", "rules"];
 const MAX_TEXT = 200;
+const encoder = new TextEncoder();
 
 function clip(value) {
   const text = String(value);
@@ -48,6 +74,10 @@ function hasExactKeys(value, keys) {
   return actual.length === keys.length && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
 }
 
+function isIndex(value, max) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= max;
+}
+
 function defaultRequestId() {
   return globalThis.crypto.randomUUID();
 }
@@ -60,13 +90,29 @@ function classifyLastError(message) {
   return NativeErrorCode.TransportError;
 }
 
+class Failure {
+  constructor(code, message, transport, service, hostErrorCode, state) {
+    this.code = code;
+    this.message = clip(message);
+    this.transport = transport;
+    this.service = service;
+    this.hostErrorCode = hostErrorCode || null;
+    this.state = state || StateStatus.Unknown;
+  }
+}
+
+/** Raised by a page fetch when the Service reports that the snapshot moved on. */
+class SnapshotChanged {}
+
 /**
  * @param {{
  *   runtime: { sendNativeMessage(host: string, message: object, callback: (response: unknown) => void): void, lastError?: { message?: string } },
  *   hostName: string,
  *   timeoutMs?: number,
+ *   snapshotTimeoutMs?: number,
  *   newRequestId?: () => string,
  *   now?: () => string,
+ *   clock?: () => number,
  *   setTimer?: (fn: () => void, ms: number) => unknown,
  *   clearTimer?: (handle: unknown) => void
  * }} deps
@@ -79,8 +125,10 @@ export function createNativeStateProvider(deps) {
     throw new Error("chrome.runtime.sendNativeMessage is not available.");
   }
   const timeoutMs = deps.timeoutMs === undefined ? DEFAULT_NATIVE_TIMEOUT_MS : deps.timeoutMs;
+  const snapshotTimeoutMs = deps.snapshotTimeoutMs === undefined ? DEFAULT_SNAPSHOT_TIMEOUT_MS : deps.snapshotTimeoutMs;
   const newRequestId = deps.newRequestId || defaultRequestId;
   const now = deps.now || (() => new Date().toISOString());
+  const clock = deps.clock || (() => Date.now());
   const setTimer = deps.setTimer || ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = deps.clearTimer || ((handle) => clearTimeout(handle));
 
@@ -110,77 +158,205 @@ export function createNativeStateProvider(deps) {
     });
   }
 
-  function fail(requestId, code, message, transport, service, hostErrorCode) {
-    return Object.freeze({
-      ok: false,
-      requestId,
-      at: now(),
-      transport,
-      service,
-      error: Object.freeze({ code, message: clip(message), hostErrorCode: hostErrorCode || null })
-    });
-  }
-
-  function interpret(requestId, response) {
-    const malformed = (message) =>
-      fail(requestId, NativeErrorCode.MalformedResponse, message, Transport.Error, ServiceStatus.Unknown);
-
-    if (!isPlainObject(response)) return malformed("Response is not a JSON object.");
-    if (response.protocolVersion !== NATIVE_PROTOCOL_VERSION) {
-      return fail(requestId, NativeErrorCode.UnsupportedProtocol, "Unsupported protocolVersion in response.",
-        Transport.Error, ServiceStatus.Unknown);
+  /**
+   * Sends one request and returns the validated `result` object; throws Failure otherwise.
+   */
+  async function call(session, fields) {
+    if (clock() > session.deadline) {
+      throw new Failure(NativeErrorCode.SnapshotTimeout, "Snapshot was not complete within " + snapshotTimeoutMs + " ms.",
+        Transport.Available, ServiceStatus.Unknown);
     }
-    if (typeof response.ok !== "boolean") return malformed("Response has no boolean ok.");
+    const requestId = newRequestId();
+    session.requestIds.push(requestId);
+    session.stats.messages++;
+    const outcome = await exchange({ protocolVersion: NATIVE_PROTOCOL_VERSION, requestId, ...fields });
+    if (outcome.transportError) {
+      throw new Failure(outcome.transportError, outcome.message, Transport.Error, ServiceStatus.Unknown);
+    }
+    const response = outcome.response;
+    const malformed = (message) => new Failure(NativeErrorCode.MalformedResponse, message, Transport.Error, ServiceStatus.Unknown);
+
+    if (!isPlainObject(response)) throw malformed("Response is not a JSON object.");
+    if (response.protocolVersion !== NATIVE_PROTOCOL_VERSION) {
+      throw new Failure(NativeErrorCode.UnsupportedProtocol, "Unsupported protocolVersion in response.", Transport.Error, ServiceStatus.Unknown);
+    }
+    if (typeof response.ok !== "boolean") throw malformed("Response has no boolean ok.");
 
     if (response.ok === false) {
-      if (!hasExactKeys(response, ["protocolVersion", "requestId", "ok", "error"])) return malformed("Unexpected error envelope fields.");
+      if (!hasExactKeys(response, ["protocolVersion", "requestId", "ok", "error"])) throw malformed("Unexpected error envelope fields.");
       const error = response.error;
       if (!isPlainObject(error) || !hasExactKeys(error, ["code", "message"]) ||
         typeof error.code !== "string" || !ERROR_CODE.test(error.code) || typeof error.message !== "string") {
-        return malformed("Error object is invalid.");
+        throw malformed("Error object is invalid.");
       }
       // A host that could not read the request (e.g. forbidden origin) answers with requestId null.
       if (response.requestId !== requestId && response.requestId !== null) {
-        return fail(requestId, NativeErrorCode.RequestIdMismatch, "Response requestId does not match.", Transport.Error, ServiceStatus.Unknown);
+        throw new Failure(NativeErrorCode.RequestIdMismatch, "Response requestId does not match.", Transport.Error, ServiceStatus.Unknown);
       }
-      const service = SERVICE_DOWN_CODES.has(error.code) ? ServiceStatus.Unavailable : ServiceStatus.Unknown;
-      return fail(requestId, NativeErrorCode.HostError, error.message, Transport.Available, service, error.code);
+      if (error.code === "snapshot_changed" && fields.command === "getStatePage") throw new SnapshotChanged();
+      const service = SERVICE_DOWN_CODES.has(error.code)
+        ? ServiceStatus.Unavailable
+        : STATE_DOWN_CODES.has(error.code) ? ServiceStatus.Available : ServiceStatus.Unknown;
+      const state = STATE_DOWN_CODES.has(error.code) ? StateStatus.Unavailable : StateStatus.Unknown;
+      throw new Failure(NativeErrorCode.HostError, error.message, Transport.Available, service, error.code, state);
     }
 
-    if (!hasExactKeys(response, ["protocolVersion", "requestId", "ok", "result"])) return malformed("Unexpected success envelope fields.");
+    if (!hasExactKeys(response, ["protocolVersion", "requestId", "ok", "result"])) throw malformed("Unexpected success envelope fields.");
     if (response.requestId !== requestId) {
-      return fail(requestId, NativeErrorCode.RequestIdMismatch, "Response requestId does not match.", Transport.Error, ServiceStatus.Unknown);
+      throw new Failure(NativeErrorCode.RequestIdMismatch, "Response requestId does not match.", Transport.Error, ServiceStatus.Unknown);
     }
-
-    const checked = createBrowserRoutingSnapshot(response.result);
-    if (!checked.ok) {
-      return fail(requestId, checked.error.code, checked.error.issues.join("; ") || checked.error.code,
-        Transport.Available, ServiceStatus.Available);
-    }
-    return Object.freeze({
-      ok: true,
-      requestId,
-      at: now(),
-      transport: Transport.Available,
-      service: ServiceStatus.Available,
-      snapshot: checked.snapshot
-    });
+    return response;
   }
 
-  async function getState() {
-    const requestId = newRequestId();
-    const request = { protocolVersion: NATIVE_PROTOCOL_VERSION, requestId, command: "getState" };
-    const outcome = await exchange(request);
-    if (outcome.transportError) {
-      return fail(requestId, outcome.transportError, outcome.message, Transport.Error, ServiceStatus.Unknown);
+  function invalid(code, message) {
+    return new Failure(code, message, Transport.Available, ServiceStatus.Available, null, StateStatus.Invalid);
+  }
+
+  function readManifest(result) {
+    if (!isPlainObject(result) || !hasExactKeys(result, MANIFEST_FIELDS)) {
+      throw invalid(NativeErrorCode.InvalidManifest, "Manifest fields are invalid.");
     }
-    return interpret(requestId, outcome.response);
+    if (result.schemaVersion !== 1) throw invalid(NativeErrorCode.InvalidManifest, "Unsupported manifest schemaVersion.");
+    if (typeof result.stateGeneration !== "string" || !STATE_GENERATION.test(result.stateGeneration)) {
+      throw invalid(NativeErrorCode.InvalidManifest, "Manifest stateGeneration is invalid.");
+    }
+    if (!isIndex(result.revision, Number.MAX_SAFE_INTEGER)) throw invalid(NativeErrorCode.InvalidManifest, "Manifest revision is invalid.");
+    if (!isIndex(result.ruleCount, Number.MAX_SAFE_INTEGER)) throw invalid(NativeErrorCode.InvalidManifest, "Manifest ruleCount is invalid.");
+    if (result.ruleCount > SnapshotLimits.maxRules) {
+      throw invalid(NativeErrorCode.LimitExceeded, "Manifest ruleCount " + result.ruleCount + " exceeds " + SnapshotLimits.maxRules + ".");
+    }
+    if (!Number.isSafeInteger(result.pageBudgetBytes) || result.pageBudgetBytes < 1 || result.pageBudgetBytes > SnapshotLimits.maxPageBudgetBytes) {
+      throw invalid(NativeErrorCode.InvalidManifest, "Manifest pageBudgetBytes is invalid.");
+    }
+    const proxy = validateBrowserProxy(result.browserProxy);
+    if (!proxy.ok) throw invalid(NativeErrorCode.InvalidEndpoint, "Manifest browserProxy is invalid: " + proxy.issues.map((i) => i.code + " " + i.path).join("; "));
+    return { ...result, browserProxy: proxy.browserProxy };
+  }
+
+  function readPage(session, manifest, startIndex, response) {
+    const bytes = encoder.encode(JSON.stringify(response)).length;
+    session.stats.totalBytes += bytes;
+    session.stats.largestPageBytes = Math.max(session.stats.largestPageBytes, bytes);
+    if (bytes > SnapshotLimits.maxPageBytes) {
+      throw invalid(NativeErrorCode.LimitExceeded, "Page of " + bytes + " bytes exceeds " + SnapshotLimits.maxPageBytes + ".");
+    }
+    if (session.stats.totalBytes > SnapshotLimits.maxSnapshotBytes) {
+      throw invalid(NativeErrorCode.LimitExceeded, "Snapshot exceeds " + SnapshotLimits.maxSnapshotBytes + " bytes.");
+    }
+    const page = response.result;
+    if (!isPlainObject(page) || !hasExactKeys(page, PAGE_FIELDS)) throw invalid(NativeErrorCode.InvalidPage, "Page fields are invalid.");
+    if (page.stateGeneration !== manifest.stateGeneration || page.revision !== manifest.revision) {
+      throw invalid(NativeErrorCode.InvalidPage, "Page identity differs from the manifest.");
+    }
+    if (page.startIndex !== startIndex) throw invalid(NativeErrorCode.InvalidPage, "Page startIndex differs from the request.");
+    if (!Array.isArray(page.rules) || page.rules.length === 0) throw invalid(NativeErrorCode.InvalidPage, "Page has no rules.");
+    const end = startIndex + page.rules.length;
+    if (end > manifest.ruleCount) throw invalid(NativeErrorCode.InvalidPage, "Page has more rules than the manifest announced.");
+    const expectedNext = end === manifest.ruleCount ? null : end;
+    if (page.nextIndex !== expectedNext) throw invalid(NativeErrorCode.InvalidPage, "Page nextIndex is inconsistent.");
+    return page;
+  }
+
+  async function attempt(session) {
+    session.stats.attempts++;
+    session.stats.pages = 0;
+    session.stats.largestPageBytes = 0;
+    session.stats.totalBytes = 0;
+
+    const manifestResponse = await call(session, { command: "getStateManifest" });
+    const manifest = readManifest(manifestResponse.result);
+    session.manifest = manifest;
+
+    const rules = [];
+    let startIndex = 0;
+    while (startIndex < manifest.ruleCount) {
+      if (session.stats.pages >= SnapshotLimits.maxPages) {
+        throw invalid(NativeErrorCode.LimitExceeded, "Snapshot needs more than " + SnapshotLimits.maxPages + " pages.");
+      }
+      const response = await call(session, {
+        command: "getStatePage",
+        stateGeneration: manifest.stateGeneration,
+        revision: manifest.revision,
+        startIndex
+      });
+      session.stats.pages++;
+      const page = readPage(session, manifest, startIndex, response);
+      for (const rule of page.rules) rules.push(rule);
+      startIndex = page.nextIndex === null ? manifest.ruleCount : page.nextIndex;
+    }
+
+    const checked = createBrowserRoutingSnapshot({
+      identity: { stateGeneration: manifest.stateGeneration, revision: manifest.revision },
+      state: { schemaVersion: manifest.schemaVersion, revision: manifest.revision, defaultRoute: manifest.defaultRoute, rules },
+      browserProxy: { status: manifest.browserProxy.status, endpoint: manifest.browserProxy.endpoint }
+    });
+    if (!checked.ok) throw invalid(checked.error.code, checked.error.issues.join("; ") || checked.error.code);
+    return checked.snapshot;
+  }
+
+  function readiness(manifest) {
+    if (!manifest) return ProxyReadiness.Unknown;
+    return manifest.browserProxy.status === "Ready" ? ProxyReadiness.Ready : ProxyReadiness.Unavailable;
+  }
+
+  function identityOf(manifest) {
+    return manifest ? Object.freeze({ stateGeneration: manifest.stateGeneration, revision: manifest.revision }) : null;
+  }
+
+  async function getSnapshot() {
+    const session = {
+      deadline: clock() + snapshotTimeoutMs,
+      requestIds: [],
+      manifest: null,
+      stats: { attempts: 0, messages: 0, pages: 0, largestPageBytes: 0, totalBytes: 0 }
+    };
+    let failure = null;
+    try {
+      while (session.stats.attempts < SnapshotLimits.maxAttempts) {
+        try {
+          const snapshot = await attempt(session);
+          return Object.freeze({
+            ok: true,
+            requestId: session.requestIds[0],
+            at: now(),
+            transport: Transport.Available,
+            service: ServiceStatus.Available,
+            state: StateStatus.Available,
+            browserProxy: readiness(session.manifest),
+            identity: snapshot.identity,
+            stats: Object.freeze({ ...session.stats }),
+            snapshot
+          });
+        } catch (error) {
+          if (!(error instanceof SnapshotChanged)) throw error;
+        }
+      }
+      failure = new Failure(NativeErrorCode.SnapshotUnstable,
+        "Service state changed during " + SnapshotLimits.maxAttempts + " consecutive snapshot attempts.",
+        Transport.Available, ServiceStatus.Available, "snapshot_changed", StateStatus.Available);
+    } catch (error) {
+      failure = error instanceof Failure
+        ? error
+        : new Failure(NativeErrorCode.ProviderException, error && error.message ? error.message : error, Transport.Error, ServiceStatus.Unknown);
+    }
+    return Object.freeze({
+      ok: false,
+      requestId: session.requestIds[0] || null,
+      at: now(),
+      transport: failure.transport,
+      service: failure.service,
+      state: failure.state,
+      browserProxy: readiness(session.manifest),
+      identity: identityOf(session.manifest),
+      stats: Object.freeze({ ...session.stats }),
+      error: Object.freeze({ code: failure.code, message: failure.message, hostErrorCode: failure.hostErrorCode })
+    });
   }
 
   return Object.freeze({
     kind: "Native",
     hostName: deps.hostName,
     protocolVersion: NATIVE_PROTOCOL_VERSION,
-    getState
+    getSnapshot
   });
 }

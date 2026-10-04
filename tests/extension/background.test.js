@@ -4,7 +4,7 @@ import { rmSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DIST_ROOT, buildExtension } from "../../scripts/build-extension.js";
-import { createFakeNativeRuntime, createFakeProxy, nativeHostFailing, nativeHostReturning, routingState } from "./fakes.js";
+import { UNAVAILABLE, createFakeNativeRuntime, createFakeProxy, nativeHostFailing, nativeHostReturning, routingState } from "./fakes.js";
 
 const EXTENSION_ID = "lfaekfalhkgmbfdjjlfcalanhijeaien";
 
@@ -156,8 +156,18 @@ test("native build service worker fetches state over native messaging and keeps 
 
     runtime.onStartup.listeners[0]();
     status = await send(mock.chrome, { command: "status" });
-    assert.equal(native.calls.length, 3);
+    assert.deepEqual(native.calls.map((call) => call.message.command),
+      ["getStateManifest", "getStatePage", "getStateManifest", "getStateManifest"]);
     assert.equal(mock.proxy.calls.set.length, 1);
+
+    host.handler = nativeHostReturning(routingState(43), UNAVAILABLE);
+    const unavailable = await send(mock.chrome, { command: "reapply" });
+    assert.equal(unavailable.source.lastDecision.kind, "browser_proxy_unavailable");
+    assert.equal(unavailable.source.state, "AVAILABLE");
+    assert.equal(unavailable.source.browserProxy, "UNAVAILABLE");
+    assert.equal(unavailable.protection, "LAST_KNOWN_GOOD");
+    assert.equal(mock.proxy.calls.set.length, 1);
+    assert.equal(mock.proxy.calls.clear, 0);
 
     assert.deepEqual(Object.keys(mock.storage).sort(), ["vpnRouteDiagnostics", "vpnRouteStateSource"]);
     assert.equal(JSON.stringify(mock.storage).includes("youtube.com"), false);

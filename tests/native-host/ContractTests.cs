@@ -26,24 +26,34 @@ public class ContractTests
     }
 
     [Fact]
-    public async Task GetStateResponse_HasExactShape()
+    public async Task ManifestResponse_HasExactShape()
     {
-        var response = await SendAsync(Frames.Request("getState", "gs-1"), FakeServiceClient.Returning(SampleState.Snapshot()));
+        var response = await SendAsync(Frames.Request("getStateManifest", "gs-1"), FakeServiceClient.Default());
 
         Assert.Equal(["protocolVersion", "requestId", "ok", "result"], Frames.Keys(response));
         Assert.Equal("gs-1", response.GetProperty("requestId").GetString());
         var result = response.GetProperty("result");
-        Assert.Equal(["state", "proxyEndpoint"], Frames.Keys(result));
-        var endpoint = result.GetProperty("proxyEndpoint");
-        Assert.Equal(["host", "port"], Frames.Keys(endpoint));
-        Assert.Equal("127.0.0.1", endpoint.GetProperty("host").GetString());
-        Assert.Equal(17891, endpoint.GetProperty("port").GetInt32());
+        Assert.Equal(["schemaVersion", "stateGeneration", "revision", "defaultRoute", "ruleCount", "pageBudgetBytes", "browserProxy"],
+            Frames.Keys(result));
+        var proxy = result.GetProperty("browserProxy");
+        Assert.Equal(["status", "endpoint"], Frames.Keys(proxy));
+        Assert.Equal("Unavailable", proxy.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, proxy.GetProperty("endpoint").ValueKind);
+    }
+
+    [Fact]
+    public async Task PageResponse_HasExactShape()
+    {
+        var response = await SendAsync(SampleService.PageRequest(0, "pg-1"), FakeServiceClient.Default());
+
+        Assert.Equal(["protocolVersion", "requestId", "ok", "result"], Frames.Keys(response));
+        Assert.Equal(["stateGeneration", "revision", "startIndex", "nextIndex", "rules"], Frames.Keys(response.GetProperty("result")));
     }
 
     [Fact]
     public async Task ErrorResponse_HasExactShape()
     {
-        var response = await SendAsync(Frames.Request("getState", "e-1"));
+        var response = await SendAsync(Frames.Request("getStateManifest", "e-1"));
 
         Assert.Equal(["protocolVersion", "requestId", "ok", "error"], Frames.Keys(response));
         Assert.Equal("e-1", response.GetProperty("requestId").GetString());

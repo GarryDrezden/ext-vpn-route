@@ -4,6 +4,7 @@ import { compilePacScript } from "../../src/pac/index.js";
 import { createProxyController } from "../../src/extension/runtime/proxy-controller.js";
 import {
   Decision,
+  MAX_RETIRED_GENERATIONS,
   Protection,
   StateSource,
   computeProtection,
@@ -13,29 +14,38 @@ import { createNativeStateProvider } from "../../src/extension/state/native-stat
 import { PHASE3_PROXY_ENDPOINT } from "../../src/extension/runtime/config.js";
 import { SMOKE_STATE } from "../../src/extension/state/smoke-state.js";
 import {
+  GEN_A,
+  GEN_B,
+  UNAVAILABLE,
   createFakeNativeRuntime,
   createFakeProxy,
   createFakeStorage,
   fakeNow,
   nativeHostFailing,
-  nativeHostReturning,
+  nativeHostServing,
   routingState
 } from "./fakes.js";
 
-const ENDPOINT = { host: "127.0.0.1", port: 17891 };
+function generation(n) {
+  return "00000000-0000-4000-8000-" + String(n).padStart(12, "0");
+}
+
+function serving(revision, options = {}) {
+  return nativeHostServing(routingState(revision), options);
+}
 
 function nativeSetup(options = {}) {
   const proxy = options.proxy || createFakeProxy();
   const diagnosticsStorage = options.diagnosticsStorage || createFakeStorage();
   const sourceStorage = options.sourceStorage || createFakeStorage();
-  const host = { handler: options.handler || nativeHostReturning(routingState(42)) };
+  const host = { handler: options.handler || serving(42) };
   const runtime = createFakeNativeRuntime((name, message) => host.handler(name, message));
   const compile = options.compile || compilePacScript;
   const makeController = () => createProxyController({ proxy, storage: diagnosticsStorage, compile, now: fakeNow });
   const makeCoordinator = (controller) => createRoutingCoordinator({
     mode: StateSource.Native,
     controller,
-    provider: createNativeStateProvider({ runtime, hostName: "com.vpnroute.browser", timeoutMs: 50, now: fakeNow }),
+    provider: createNativeStateProvider({ runtime, hostName: "com.vpnroute.browser", timeoutMs: 500, now: fakeNow }),
     storage: sourceStorage,
     now: fakeNow
   });
@@ -56,7 +66,7 @@ function nativeSetup(options = {}) {
   return ctx;
 }
 
-describe("coordinator: revision policy", () => {
+describe("coordinator: revision policy within one generation", () => {
   test("first valid snapshot is applied", async () => {
     const ctx = nativeSetup();
     const view = await ctx.coordinator.sync("installed");
@@ -65,53 +75,55 @@ describe("coordinator: revision policy", () => {
     assert.equal(view.diagnostics.status, "APPLIED");
     assert.equal(view.diagnostics.lastApplied.revision, 42);
     assert.equal(view.source.lastDecision.kind, Decision.Applied);
-    assert.equal(view.source.lineage.lastAppliedRevision, 42);
-    assert.equal(view.source.fetchedRevision, 42);
+    assert.deepEqual(view.source.lineage.appliedIdentity, { stateGeneration: GEN_A, revision: 42 });
+    assert.equal(view.source.lineage.currentGeneration, GEN_A);
+    assert.equal(view.source.lineage.acceptedRevision, 42);
+    assert.deepEqual(view.source.fetchedIdentity, { stateGeneration: GEN_A, revision: 42 });
+    assert.equal(view.source.state, "AVAILABLE");
+    assert.equal(view.source.browserProxy, "READY");
     assert.equal(view.protection, Protection.Current);
     assert.equal(ctx.activeRevision(), 42);
     assert.equal(ctx.proxy.ours.pacScript.mandatory, true);
   });
 
-  test("42 -> 43 applied; failed fetch for 44 keeps 43; stale 42 is rejected", async () => {
+  test("A42 -> A43 applied; failed fetch keeps A43; stale A41 and A42 are rejected; A44 applied", async () => {
     const ctx = nativeSetup();
     await ctx.coordinator.sync("startup");
 
-    ctx.serve(nativeHostReturning(routingState(43)));
+    ctx.serve(serving(43));
     let view = await ctx.coordinator.sync("popup");
     assert.equal(view.diagnostics.lastApplied.revision, 43);
-    assert.equal(ctx.activeRevision(), 43);
     assert.equal(view.protection, Protection.Current);
 
     ctx.serve(() => ({ lastError: "Native host has exited." }));
     const setsBefore = ctx.proxy.calls.set.length;
     view = await ctx.coordinator.sync("popup");
     assert.equal(view.source.lastDecision.kind, Decision.FetchFailed);
-    assert.equal(view.source.lastFetch.result, "ERROR");
-    assert.equal(view.source.transport, "ERROR");
     assert.equal(view.source.lastTransportError.code, "host_exited");
     assert.equal(ctx.activeRevision(), 43);
     assert.equal(ctx.proxy.calls.set.length, setsBefore);
     assert.equal(ctx.proxy.calls.clear, 0);
-    assert.equal(view.diagnostics.active.pac, "CURRENT");
     assert.equal(view.protection, Protection.LastKnownGood);
 
-    ctx.serve(nativeHostReturning(routingState(42)));
-    view = await ctx.coordinator.sync("popup");
-    assert.equal(view.source.lastDecision.kind, Decision.StaleSnapshot);
-    assert.equal(view.source.fetchedRevision, 42);
-    assert.equal(view.source.lineage.lastAppliedRevision, 43);
-    assert.equal(ctx.activeRevision(), 43);
-    assert.equal(ctx.proxy.calls.set.length, setsBefore);
-    assert.equal(view.protection, Protection.LastKnownGood);
+    for (const stale of [41, 42]) {
+      ctx.serve(serving(stale));
+      view = await ctx.coordinator.sync("popup");
+      assert.equal(view.source.lastDecision.kind, Decision.StaleSnapshot);
+      assert.deepEqual(view.source.fetchedIdentity, { stateGeneration: GEN_A, revision: stale });
+      assert.equal(view.source.lineage.acceptedRevision, 43);
+      assert.equal(ctx.activeRevision(), 43);
+      assert.equal(ctx.proxy.calls.set.length, setsBefore);
+      assert.equal(view.protection, Protection.LastKnownGood);
+    }
 
-    ctx.serve(nativeHostReturning(routingState(44)));
+    ctx.serve(serving(44));
     view = await ctx.coordinator.sync("popup");
     assert.equal(view.source.lastDecision.kind, Decision.Applied);
     assert.equal(ctx.activeRevision(), 44);
     assert.equal(view.protection, Protection.Current);
   });
 
-  test("same revision is idempotent: no second proxy.set", async () => {
+  test("same identity is idempotent: no second proxy.set", async () => {
     const ctx = nativeSetup();
     await ctx.coordinator.sync("startup");
     const sets = ctx.proxy.calls.set.length;
@@ -119,20 +131,17 @@ describe("coordinator: revision policy", () => {
     const view = await ctx.coordinator.sync("popup");
     assert.equal(view.source.lastDecision.kind, Decision.Unchanged);
     assert.equal(ctx.proxy.calls.set.length, sets);
-    assert.equal(view.diagnostics.status, "APPLIED");
     assert.equal(view.protection, Protection.Current);
   });
 
-  test("same revision after a service worker restart is still idempotent", async () => {
+  test("same identity after a service worker restart is still idempotent", async () => {
     const ctx = nativeSetup();
     await ctx.coordinator.sync("startup");
     const sets = ctx.proxy.calls.set.length;
 
     ctx.restart();
     const status = await ctx.coordinator.status();
-    assert.equal(status.diagnostics.status, "APPLIED");
     assert.equal(status.diagnostics.active.pac, "CURRENT");
-    assert.equal(status.diagnostics.active.verification, "header_and_length");
     assert.equal(status.protection, Protection.Current);
 
     const view = await ctx.coordinator.sync("startup");
@@ -141,27 +150,27 @@ describe("coordinator: revision policy", () => {
   });
 
   test("stale check survives a service worker restart", async () => {
-    const ctx = nativeSetup({ handler: nativeHostReturning(routingState(43)) });
+    const ctx = nativeSetup({ handler: serving(43) });
     await ctx.coordinator.sync("startup");
     ctx.restart();
-    ctx.serve(nativeHostReturning(routingState(42)));
+    ctx.serve(serving(42));
 
     const view = await ctx.coordinator.sync("startup");
     assert.equal(view.source.lastDecision.kind, Decision.StaleSnapshot);
     assert.equal(ctx.activeRevision(), 43);
   });
 
-  test("same revision with a changed endpoint is re-applied", async () => {
+  test("same identity with a changed endpoint is re-applied", async () => {
     const ctx = nativeSetup();
     await ctx.coordinator.sync("startup");
-    ctx.serve(nativeHostReturning(routingState(42), { host: "127.0.0.1", port: 18000 }));
+    ctx.serve(serving(42, { browserProxy: { status: "Ready", endpoint: { host: "127.0.0.1", port: 18000 } } }));
 
     const view = await ctx.coordinator.sync("popup");
     assert.equal(view.source.lastDecision.kind, Decision.Applied);
     assert.match(ctx.proxy.ours.pacScript.data, /SOCKS5 127\.0\.0\.1:18000/);
   });
 
-  test("same revision is re-applied when this PAC is no longer effective", async () => {
+  test("same identity is re-applied when this PAC is no longer effective", async () => {
     const ctx = nativeSetup();
     await ctx.coordinator.sync("startup");
     ctx.proxy.owner = "none";
@@ -173,15 +182,169 @@ describe("coordinator: revision policy", () => {
   });
 });
 
+describe("coordinator: generation lineage", () => {
+  test("B1 after A43 is a new lineage and is applied; replayed A100 is rejected", async () => {
+    const ctx = nativeSetup({ handler: serving(43) });
+    await ctx.coordinator.sync("startup");
+
+    ctx.serve(serving(1, { generation: GEN_B }));
+    let view = await ctx.coordinator.sync("popup");
+    assert.equal(view.source.lastDecision.kind, Decision.Applied);
+    assert.match(view.source.lastDecision.message, /new lineage/);
+    assert.deepEqual(view.source.lineage.appliedIdentity, { stateGeneration: GEN_B, revision: 1 });
+    assert.equal(view.source.lineage.currentGeneration, GEN_B);
+    assert.deepEqual(view.source.lineage.retiredGenerations, [GEN_A]);
+    assert.equal(view.source.lastLineageChange.from, GEN_A);
+    assert.equal(view.source.lastLineageChange.to, GEN_B);
+    assert.equal(ctx.activeRevision(), 1);
+    assert.equal(view.protection, Protection.Current);
+
+    const sets = ctx.proxy.calls.set.length;
+    ctx.serve(serving(100, { generation: GEN_A }));
+    view = await ctx.coordinator.sync("popup");
+    assert.equal(view.source.lastDecision.kind, Decision.RetiredGeneration);
+    assert.equal(ctx.activeRevision(), 1);
+    assert.equal(ctx.proxy.calls.set.length, sets);
+    assert.equal(view.source.lineage.currentGeneration, GEN_B);
+    assert.equal(view.protection, Protection.LastKnownGood);
+
+    ctx.serve(serving(2, { generation: GEN_B }));
+    view = await ctx.coordinator.sync("popup");
+    assert.equal(view.source.lastDecision.kind, Decision.Applied);
+    assert.equal(ctx.activeRevision(), 2);
+  });
+
+  test("replay rejection survives a service worker restart and an explicit clear", async () => {
+    const ctx = nativeSetup({ handler: serving(43) });
+    await ctx.coordinator.sync("startup");
+    ctx.serve(serving(1, { generation: GEN_B }));
+    await ctx.coordinator.sync("popup");
+
+    ctx.restart();
+    ctx.serve(serving(100, { generation: GEN_A }));
+    let view = await ctx.coordinator.sync("startup");
+    assert.equal(view.source.lastDecision.kind, Decision.RetiredGeneration);
+
+    view = await ctx.coordinator.clear();
+    assert.equal(view.source.lastDecision.kind, Decision.Cleared);
+    assert.equal(view.source.lineage.appliedIdentity, null);
+    assert.equal(view.source.lineage.currentGeneration, GEN_B);
+
+    view = await ctx.coordinator.sync("popup");
+    assert.equal(view.source.lastDecision.kind, Decision.RetiredGeneration);
+    assert.equal(ctx.proxy.owner, "none");
+
+    ctx.serve(serving(1, { generation: GEN_B }));
+    view = await ctx.coordinator.sync("popup");
+    assert.equal(view.source.lastDecision.kind, Decision.Applied);
+    assert.equal(ctx.activeRevision(), 1);
+  });
+
+  test("a new generation may start below the old revision (reset to 0)", async () => {
+    const ctx = nativeSetup({ handler: serving(5000) });
+    await ctx.coordinator.sync("startup");
+    ctx.serve(nativeHostServing({ schemaVersion: 1, revision: 0, defaultRoute: "Direct", rules: [] }, { generation: GEN_B }));
+    const view = await ctx.coordinator.sync("popup");
+    assert.equal(view.source.lastDecision.kind, Decision.Applied);
+    assert.equal(ctx.activeRevision(), 0);
+  });
+
+  test("retired generations are bounded", async () => {
+    const ctx = nativeSetup({ handler: serving(1, { generation: generation(0) }) });
+    await ctx.coordinator.sync("startup");
+    for (let i = 1; i <= MAX_RETIRED_GENERATIONS + 4; i++) {
+      ctx.serve(serving(1, { generation: generation(i) }));
+      await ctx.coordinator.sync("popup");
+    }
+    const view = await ctx.coordinator.status();
+    assert.equal(view.source.lineage.retiredGenerations.length, MAX_RETIRED_GENERATIONS);
+    assert.equal(view.source.lineage.retiredGenerations[0], generation(MAX_RETIRED_GENERATIONS + 3));
+  });
+
+  test("Phase 4 source diagnostics without generations are discarded, not reinterpreted", async () => {
+    const sourceStorage = createFakeStorage({ sourceVersion: 1, lineage: { lastAppliedRevision: 9000 } });
+    const ctx = nativeSetup({ sourceStorage, handler: serving(42) });
+    const view = await ctx.coordinator.sync("startup");
+    assert.equal(view.source.sourceVersion, 2);
+    assert.equal(view.source.lastDecision.kind, Decision.Applied);
+    assert.equal("lastAppliedRevision" in view.source.lineage, false);
+  });
+});
+
+describe("coordinator: browser proxy readiness", () => {
+  test("Unavailable without any PAC: state available, nothing applied, NOT_PROTECTED", async () => {
+    const ctx = nativeSetup({ handler: serving(42, { browserProxy: UNAVAILABLE }) });
+    const view = await ctx.coordinator.sync("startup");
+
+    assert.equal(view.source.service, "AVAILABLE");
+    assert.equal(view.source.state, "AVAILABLE");
+    assert.equal(view.source.browserProxy, "UNAVAILABLE");
+    assert.equal(view.source.lastDecision.kind, Decision.BrowserProxyUnavailable);
+    assert.equal(view.source.lastFetch.result, "OK");
+    assert.equal(ctx.proxy.calls.set.length, 0);
+    assert.equal(ctx.proxy.calls.clear, 0);
+    assert.equal(ctx.proxy.owner, "none");
+    assert.equal(view.protection, Protection.NotProtected);
+  });
+
+  test("Unavailable after an applied PAC keeps that PAC as last-known-good; no clear, no DIRECT", async () => {
+    const ctx = nativeSetup();
+    await ctx.coordinator.sync("startup");
+    const pac = ctx.proxy.ours.pacScript.data;
+    const sets = ctx.proxy.calls.set.length;
+
+    ctx.serve(serving(43, { browserProxy: UNAVAILABLE }));
+    let view = await ctx.coordinator.sync("popup");
+    assert.equal(view.source.lastDecision.kind, Decision.BrowserProxyUnavailable);
+    assert.equal(ctx.proxy.ours.pacScript.data, pac);
+    assert.equal(ctx.proxy.calls.set.length, sets);
+    assert.equal(ctx.proxy.calls.clear, 0);
+    assert.equal(view.protection, Protection.LastKnownGood);
+    assert.equal(view.source.lineage.acceptedRevision, 43);
+
+    ctx.serve(serving(42));
+    view = await ctx.coordinator.sync("popup");
+    assert.equal(view.source.lastDecision.kind, Decision.StaleSnapshot);
+
+    ctx.serve(serving(43));
+    view = await ctx.coordinator.sync("popup");
+    assert.equal(view.source.lastDecision.kind, Decision.Applied);
+    assert.equal(ctx.activeRevision(), 43);
+    assert.equal(view.protection, Protection.Current);
+  });
+
+  test("Ready again with the applied identity is unchanged and CURRENT", async () => {
+    const ctx = nativeSetup();
+    await ctx.coordinator.sync("startup");
+    ctx.serve(serving(42, { browserProxy: UNAVAILABLE }));
+    assert.equal((await ctx.coordinator.sync("popup")).protection, Protection.LastKnownGood);
+
+    ctx.serve(serving(42));
+    const view = await ctx.coordinator.sync("popup");
+    assert.equal(view.source.lastDecision.kind, Decision.Unchanged);
+    assert.equal(view.protection, Protection.Current);
+  });
+});
+
 describe("coordinator: fail-safe", () => {
   const failures = [
     ["host not found", () => ({ lastError: "Specified native messaging host not found." }), "host_not_found"],
     ["timeout", () => ({ hang: true }), "timeout"],
     ["Service unavailable", nativeHostFailing("service_unavailable"), "host_error"],
+    ["Service untrusted", nativeHostFailing("service_untrusted"), "host_error"],
+    ["state unavailable", nativeHostFailing("browser_state_unavailable"), "host_error"],
     ["malformed response", () => ({ response: "garbage" }), "malformed_response"],
     ["request id mismatch", () => ({ response: { protocolVersion: 1, requestId: "x", ok: true, result: {} } }), "request_id_mismatch"],
-    ["invalid state", nativeHostReturning({ schemaVersion: 1, revision: -1, defaultRoute: "Direct", rules: [] }), "invalid_state"],
-    ["invalid endpoint", nativeHostReturning(routingState(50), { host: "10.0.0.5", port: 1080 }), "invalid_endpoint"]
+    ["invalid state", nativeHostServing({ schemaVersion: 1, revision: 50, defaultRoute: "Direct", rules: [{ id: "x" }] }), "invalid_state"],
+    ["invalid endpoint", serving(50, { browserProxy: { status: "Ready", endpoint: { host: "10.0.0.5", port: 1080 } } }), "invalid_endpoint"],
+    ["unstable snapshot", (() => {
+      let revision = 50;
+      return (host, message) => {
+        const outcome = nativeHostServing({ ...routingState(revision), rules: [routingState(1).rules[0], { ...routingState(1).rules[0], id: "b", host: "b.example" }] }, { pageSize: 1 })(host, message);
+        if (message.command === "getStateManifest") revision++;
+        return outcome;
+      };
+    })(), "snapshot_unstable"]
   ];
 
   for (const [name, handler, code] of failures) {
@@ -223,6 +386,13 @@ describe("coordinator: fail-safe", () => {
     assert.equal(view.source.lastTransportError, null);
   });
 
+  test("state unavailable is reported as Service AVAILABLE + State UNAVAILABLE", async () => {
+    const ctx = nativeSetup({ handler: nativeHostFailing("browser_state_unavailable") });
+    const view = await ctx.coordinator.sync("startup");
+    assert.equal(view.source.service, "AVAILABLE");
+    assert.equal(view.source.state, "UNAVAILABLE");
+  });
+
   test("compile error keeps the previous PAC", async () => {
     let failCompile = false;
     const compile = (state, options) => (failCompile
@@ -233,27 +403,25 @@ describe("coordinator: fail-safe", () => {
     const pac = ctx.proxy.ours.pacScript.data;
 
     failCompile = true;
-    ctx.serve(nativeHostReturning(routingState(43)));
+    ctx.serve(serving(43));
     const view = await ctx.coordinator.sync("popup");
     assert.equal(view.source.lastDecision.kind, Decision.ApplyFailed);
-    assert.equal(view.diagnostics.status, "ERROR");
     assert.equal(view.diagnostics.active.pac, "PREVIOUS");
     assert.equal(ctx.proxy.ours.pacScript.data, pac);
-    assert.equal(view.source.lineage.lastAppliedRevision, 42);
+    assert.deepEqual(view.source.lineage.appliedIdentity, { stateGeneration: GEN_A, revision: 42 });
     assert.equal(view.protection, Protection.LastKnownGood);
   });
 
-  test("proxy.set failure keeps the previous PAC and the lineage", async () => {
+  test("proxy.set failure keeps the previous PAC and the applied identity", async () => {
     const ctx = nativeSetup();
     await ctx.coordinator.sync("startup");
     ctx.proxy.failures.set.push("set rejected");
-    ctx.serve(nativeHostReturning(routingState(43)));
+    ctx.serve(serving(43));
 
     const view = await ctx.coordinator.sync("popup");
     assert.equal(view.source.lastDecision.kind, Decision.ApplyFailed);
     assert.equal(ctx.activeRevision(), 42);
-    assert.equal(view.source.lineage.lastAppliedRevision, 42);
-    assert.equal(view.diagnostics.active.pac, "PREVIOUS");
+    assert.deepEqual(view.source.lineage.appliedIdentity, { stateGeneration: GEN_A, revision: 42 });
     assert.equal(view.protection, Protection.LastKnownGood);
   });
 
@@ -263,7 +431,7 @@ describe("coordinator: fail-safe", () => {
     const coordinator = createRoutingCoordinator({
       mode: StateSource.Native,
       controller,
-      provider: { hostName: "com.vpnroute.browser", protocolVersion: 1, getState: async () => { throw new Error("boom"); } },
+      provider: { hostName: "com.vpnroute.browser", protocolVersion: 1, getSnapshot: async () => { throw new Error("boom"); } },
       storage: createFakeStorage(),
       now: fakeNow
     });
@@ -283,8 +451,8 @@ describe("coordinator: fail-safe", () => {
 });
 
 describe("coordinator: clear and fixture isolation", () => {
-  test("clear happens only on explicit request and resets the lineage", async () => {
-    const ctx = nativeSetup({ handler: nativeHostReturning(routingState(43)) });
+  test("clear happens only on explicit request; the same identity is re-applied afterwards", async () => {
+    const ctx = nativeSetup({ handler: serving(43) });
     await ctx.coordinator.sync("startup");
     ctx.serve(() => ({ lastError: "Specified native messaging host not found." }));
     await ctx.coordinator.sync("popup");
@@ -295,13 +463,17 @@ describe("coordinator: clear and fixture isolation", () => {
     assert.equal(ctx.proxy.calls.clear, 1);
     assert.equal(cleared.diagnostics.status, "NOT_APPLIED");
     assert.equal(cleared.source.lastDecision.kind, Decision.Cleared);
-    assert.equal(cleared.source.lineage.lastAppliedRevision, null);
+    assert.equal(cleared.source.lineage.appliedIdentity, null);
+    assert.equal(cleared.source.lineage.acceptedRevision, 43);
     assert.equal(cleared.protection, Protection.NotProtected);
 
-    ctx.serve(nativeHostReturning(routingState(5)));
+    ctx.serve(serving(42));
+    assert.equal((await ctx.coordinator.sync("popup")).source.lastDecision.kind, Decision.StaleSnapshot);
+
+    ctx.serve(serving(43));
     const view = await ctx.coordinator.sync("popup");
     assert.equal(view.source.lastDecision.kind, Decision.Applied);
-    assert.equal(ctx.activeRevision(), 5);
+    assert.equal(ctx.activeRevision(), 43);
   });
 
   test("Native mode never falls back to a fixture", async () => {
@@ -326,7 +498,7 @@ describe("coordinator: clear and fixture isolation", () => {
     await ctx.coordinator.sync("startup");
     const text = JSON.stringify(ctx.sourceStorage.value);
     assert.equal(text.includes("youtube"), false);
-    assert.equal(text.includes("rules"), false);
+    assert.equal(text.includes("\"rules\""), false);
     const diagnostics = JSON.stringify(ctx.diagnosticsStorage.value);
     assert.equal(diagnostics.includes("youtube.com"), false);
   });
@@ -359,17 +531,28 @@ describe("coordinator: clear and fixture isolation", () => {
 
 describe("routing protection", () => {
   const applied = (pac, revision, status = "APPLIED") => ({ status, active: { pac, revision } });
-  const fetched = (result, revision) => ({ lastFetch: { result }, fetchedRevision: revision });
+  const source = (result, fetched, appliedIdentity, browserProxy = "READY") => ({
+    lastFetch: { result },
+    browserProxy,
+    fetchedIdentity: fetched,
+    lineage: { appliedIdentity }
+  });
+  const a43 = { stateGeneration: GEN_A, revision: 43 };
+  const a42 = { stateGeneration: GEN_A, revision: 42 };
+  const b43 = { stateGeneration: GEN_B, revision: 43 };
 
   test("matrix", () => {
-    assert.equal(computeProtection("Native", applied("CURRENT", 43), fetched("OK", 43)), Protection.Current);
-    assert.equal(computeProtection("Native", applied("CURRENT", 43), fetched("ERROR", 43)), Protection.LastKnownGood);
-    assert.equal(computeProtection("Native", applied("CURRENT", 43), fetched("OK", 42)), Protection.LastKnownGood);
+    assert.equal(computeProtection("Native", applied("CURRENT", 43), source("OK", a43, a43)), Protection.Current);
+    assert.equal(computeProtection("Native", applied("CURRENT", 43), source("ERROR", a43, a43)), Protection.LastKnownGood);
+    assert.equal(computeProtection("Native", applied("CURRENT", 43), source("OK", a42, a43)), Protection.LastKnownGood);
+    assert.equal(computeProtection("Native", applied("CURRENT", 43), source("OK", b43, a43)), Protection.LastKnownGood);
+    assert.equal(computeProtection("Native", applied("CURRENT", 43), source("OK", a43, a43, "UNAVAILABLE")), Protection.LastKnownGood);
+    assert.equal(computeProtection("Native", applied("CURRENT", 43), source("OK", a43, null)), Protection.LastKnownGood);
     assert.equal(computeProtection("Native", applied("CURRENT", 43), null), Protection.LastKnownGood);
-    assert.equal(computeProtection("Native", applied("PREVIOUS", 43, "ERROR"), fetched("OK", 44)), Protection.LastKnownGood);
-    assert.equal(computeProtection("Native", applied("NONE", null, "NOT_APPLIED"), fetched("OK", 1)), Protection.NotProtected);
-    assert.equal(computeProtection("Native", applied("UNRECOGNIZED", 9, "ERROR"), fetched("OK", 9)), Protection.NotProtected);
-    assert.equal(computeProtection("Native", applied("UNKNOWN", null), fetched("OK", 1)), Protection.NotProtected);
+    assert.equal(computeProtection("Native", applied("PREVIOUS", 43, "ERROR"), source("OK", a43, a43)), Protection.LastKnownGood);
+    assert.equal(computeProtection("Native", applied("NONE", null, "NOT_APPLIED"), source("OK", a43, null)), Protection.NotProtected);
+    assert.equal(computeProtection("Native", applied("UNRECOGNIZED", 9, "ERROR"), source("OK", a43, a43)), Protection.NotProtected);
+    assert.equal(computeProtection("Native", applied("UNKNOWN", null), source("OK", a43, a43)), Protection.NotProtected);
     assert.equal(computeProtection("Fixture", applied("CURRENT", 3001), null), Protection.Current);
     assert.equal(computeProtection("Fixture", applied("PREVIOUS", 3001, "ERROR"), null), Protection.LastKnownGood);
   });

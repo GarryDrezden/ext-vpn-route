@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using VpnRoute.NativeHost.Security;
 using VpnRoute.NativeHost.Service;
@@ -11,19 +12,36 @@ internal sealed class RecordingLog : IHostLog
     public void Info(string message) => Lines.Add(message);
 }
 
-internal sealed class FakeServiceClient(Func<CancellationToken, Task<ServiceStateSnapshot>> handler) : IServiceStateClient
-{
-    public int Calls { get; private set; }
+internal sealed record ServiceCall(string CorrelationId, SnapshotIdentity? Identity, int? StartIndex);
 
-    public Task<ServiceStateSnapshot> GetStateAsync(CancellationToken cancellationToken)
+internal sealed class FakeServiceClient(
+    Func<CancellationToken, Task<ServiceReply>> manifest,
+    Func<SnapshotIdentity, int, CancellationToken, Task<ServiceReply>> page) : IServiceStateClient
+{
+    public List<ServiceCall> Requests { get; } = [];
+    public int Calls => Requests.Count;
+
+    public Task<ServiceReply> GetManifestAsync(string correlationId, CancellationToken cancellationToken)
     {
-        Calls++;
-        return handler(cancellationToken);
+        Requests.Add(new(correlationId, null, null));
+        return manifest(cancellationToken);
     }
 
-    public static FakeServiceClient Returning(ServiceStateSnapshot snapshot) => new(_ => Task.FromResult(snapshot));
+    public Task<ServiceReply> GetPageAsync(string correlationId, SnapshotIdentity identity, int startIndex, CancellationToken cancellationToken)
+    {
+        Requests.Add(new(correlationId, identity, startIndex));
+        return page(identity, startIndex, cancellationToken);
+    }
 
-    public static FakeServiceClient Throwing(Exception exception) => new(_ => Task.FromException<ServiceStateSnapshot>(exception));
+    public static FakeServiceClient Returning(ServiceReply manifest, Func<SnapshotIdentity, int, ServiceReply>? page = null) =>
+        new(_ => Task.FromResult(manifest), (id, start, _) => Task.FromResult(page is null ? SampleService.PageReply(id, start) : page(id, start)));
+
+    public static FakeServiceClient Throwing(Exception exception) =>
+        new(_ => Task.FromException<ServiceReply>(exception), (_, _, _) => Task.FromException<ServiceReply>(exception));
+
+    public static FakeServiceClient Unavailable() => Throwing(new ServiceUnavailableException());
+
+    public static FakeServiceClient Default() => Returning(SampleService.ManifestReply());
 }
 
 internal sealed record HostRun(int ExitCode, byte[] Stdout, List<JsonElement> Responses, List<string> Log);
@@ -42,57 +60,34 @@ internal static class HostHarness
         using var output = new MemoryStream();
         var log = new RecordingLog();
         var exitCode = await NativeHostApp.RunAsync(
-            input, output, args ?? ChromeArgs, client ?? new UnavailableServiceStateClient(), log, serviceTimeout);
+            input, output, args ?? ChromeArgs, client ?? FakeServiceClient.Unavailable(), log, serviceTimeout);
         var stdout = output.ToArray();
         return new HostRun(exitCode, stdout, Frames.Parse(stdout), log.Lines);
     }
 }
 
-internal static class SampleState
+/// <summary>Service IPC v1 result payloads as the VPN Route Service produces them.</summary>
+internal static class SampleService
 {
-    public const string Json = """
-        {
-          "schemaVersion": 1,
-          "revision": 43,
-          "defaultRoute": "Direct",
-          "rules": [
-            {
-              "id": "youtube",
-              "name": "YouTube",
-              "host": "youtube.com",
-              "matchType": "DomainAndSubdomains",
-              "routeMode": "VPN",
-              "enabled": true,
-              "source": "User",
-              "notes": null
-            }
-          ]
-        }
-        """;
+    public const string Generation = "9b2f6c1e-1d2a-4f57-9a43-3f2a9d7c1b10";
+    public const long Revision = 43;
 
-    public static JsonElement Element(string json = Json)
-    {
-        using var document = JsonDocument.Parse(json);
-        return document.RootElement.Clone();
-    }
+    public static string Manifest(int ruleCount = 1, long revision = Revision, string generation = Generation,
+        string proxy = """{"status":"Unavailable","endpoint":null}""") =>
+        $$"""{"schemaVersion":1,"stateGeneration":"{{generation}}","revision":{{revision}},"defaultRoute":"Direct","ruleCount":{{ruleCount}},"pageBudgetBytes":520192,"browserProxy":{{proxy}}}""";
 
-    public static ServiceStateSnapshot Snapshot(string host = "127.0.0.1", int port = 17891) =>
-        new(Element(), new ProxyEndpoint(host, port));
+    public static ServiceReply ManifestReply(int ruleCount = 1, long revision = Revision, string proxy = """{"status":"Unavailable","endpoint":null}""") =>
+        ServiceReply.Success(Encoding.UTF8.GetBytes(Manifest(ruleCount, revision, proxy: proxy)));
 
-    public static ServiceStateSnapshot WithRules(int count)
-    {
-        var rules = Enumerable.Range(0, count).Select(i => new
-        {
-            id = $"rule-{i:D5}",
-            name = $"Generated rule {i}",
-            host = $"host-{i:D5}.example-domain.test",
-            matchType = i % 3 == 0 ? "ExactHost" : "DomainAndSubdomains",
-            routeMode = "VPN",
-            enabled = true,
-            source = "User",
-            notes = (string?)null
-        });
-        var json = JsonSerializer.Serialize(new { schemaVersion = 1, revision = 3999, defaultRoute = "Direct", rules });
-        return new ServiceStateSnapshot(Element(json), new ProxyEndpoint("127.0.0.1", 17891));
-    }
+    public static string Rule(int i) =>
+        $$"""{"id":"rule-{{i:D5}}","name":"Generated rule {{i}}","host":"host-{{i:D5}}.example-domain.test","matchType":"DomainAndSubdomains","routeMode":"VPN","enabled":true,"source":"User","notes":null}""";
+
+    public static string Page(int startIndex, int count, int? nextIndex, long revision = Revision, string generation = Generation) =>
+        $$"""{"stateGeneration":"{{generation}}","revision":{{revision}},"startIndex":{{startIndex}},"nextIndex":{{(nextIndex?.ToString() ?? "null")}},"rules":[{{string.Join(",", Enumerable.Range(startIndex, count).Select(Rule))}}]}""";
+
+    public static ServiceReply PageReply(SnapshotIdentity identity, int startIndex, int count = 1, int? nextIndex = null) =>
+        ServiceReply.Success(Encoding.UTF8.GetBytes(Page(startIndex, count, nextIndex, identity.Revision, identity.StateGeneration)));
+
+    public static string PageRequest(int startIndex = 0, string requestId = "page-1", string generation = Generation, long revision = Revision) =>
+        JsonSerializer.Serialize(new { protocolVersion = 1, requestId, command = "getStatePage", stateGeneration = generation, revision, startIndex });
 }

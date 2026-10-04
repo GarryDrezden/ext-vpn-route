@@ -42,9 +42,9 @@ public class SecurityTests
     [InlineData("chrome-extension://onodojebmdbcndjelgfhoiffeojngmbd/")]
     public async Task ForbiddenOrigin_ExecutesNoCommands(string args)
     {
-        var client = FakeServiceClient.Returning(SampleState.Snapshot());
+        var client = FakeServiceClient.Default();
         var run = await HostHarness.RunAsync(
-            Frames.Concat(Frames.Of(Frames.Request("getState")), Frames.Of(Frames.Request("ping"))), client, Args(args));
+            Frames.Concat(Frames.Of(Frames.Request("getStateManifest")), Frames.Of(SampleService.PageRequest()), Frames.Of(Frames.Request("ping"))), client, Args(args));
 
         Assert.Equal(ExitCodes.ForbiddenOrigin, run.ExitCode);
         var response = Assert.Single(run.Responses);
@@ -70,9 +70,17 @@ public class SecurityTests
     [InlineData("deleteRule")]
     [InlineData("PING")]
     [InlineData("getstate")]
+    [InlineData("getState")]
+    [InlineData("GetStateManifest")]
+    [InlineData("getManifest")]
+    [InlineData("getPage")]
+    [InlineData("SetConfig")]
+    [InlineData("ConnectVpn")]
+    [InlineData("EmergencyRestore")]
+    [InlineData("relay")]
     public async Task ArbitraryCommands_AreUnavailable(string command)
     {
-        var client = FakeServiceClient.Returning(SampleState.Snapshot());
+        var client = FakeServiceClient.Default();
         var run = await HostHarness.RunAsync(Frames.Of(Frames.Request(command)), client);
 
         Assert.Equal(ProtocolV1.Errors.UnknownCommand, Assert.Single(run.Responses).GetProperty("error").GetProperty("code").GetString());

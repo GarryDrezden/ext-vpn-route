@@ -1,12 +1,17 @@
 /**
  * Connects a state source with the proxy controller:
- *   provider.getState() -> validated BrowserRoutingSnapshot -> revision policy -> controller.apply().
+ *   provider.getSnapshot() -> validated BrowserRoutingSnapshot -> lineage policy
+ *   -> browser proxy readiness -> controller.apply().
  *
  * Fail-safe invariants (Native mode):
  * - a failed or invalid fetch never clears the proxy, never installs DIRECT and never falls
  *   back to a fixture: the last applied PAC stays active (last-known-good);
- * - a snapshot older than the last applied Service revision is rejected (stale_snapshot);
- * - the proxy is cleared only by an explicit clear().
+ * - lineage is {stateGeneration, revision}: within one generation a lower revision is
+ *   rejected (stale_snapshot); a different generation starts a new lineage and retires the
+ *   previous one, so a replayed snapshot of a retired generation is rejected at any revision;
+ * - a snapshot is applied only when the Service reports the browser proxy as Ready;
+ *   otherwise the current PAC is kept as is (browser_proxy_unavailable);
+ * - the proxy is cleared only by an explicit clear(), which keeps the lineage.
  *
  * Fixture mode keeps the Phase 3 behaviour: every sync recompiles the build-time fixture.
  */
@@ -25,17 +30,25 @@ export const Decision = Object.freeze({
   Applied: "applied",
   Unchanged: "unchanged",
   StaleSnapshot: "stale_snapshot",
+  RetiredGeneration: "retired_generation",
+  BrowserProxyUnavailable: "browser_proxy_unavailable",
   FetchFailed: "fetch_failed",
   ApplyFailed: "apply_failed",
   Cleared: "cleared",
   ClearFailed: "clear_failed"
 });
 
-const SOURCE_DIAGNOSTICS_VERSION = 1;
+export const MAX_RETIRED_GENERATIONS = 16;
+
+const SOURCE_DIAGNOSTICS_VERSION = 2;
 const TRANSPORT_ERROR_CODES = new Set([
   "host_not_found", "access_forbidden", "host_exited", "transport_error", "timeout",
   "malformed_response", "unsupported_protocol", "request_id_mismatch", "provider_exception"
 ]);
+
+export function createInitialLineage() {
+  return { currentGeneration: null, acceptedRevision: null, appliedIdentity: null, retiredGenerations: [] };
+}
 
 export function createInitialSourceDiagnostics(provider) {
   return {
@@ -44,12 +57,19 @@ export function createInitialSourceDiagnostics(provider) {
     protocolVersion: provider.protocolVersion,
     transport: "UNKNOWN",
     service: "UNKNOWN",
+    state: "UNKNOWN",
+    browserProxy: "UNKNOWN",
     lastFetch: null,
-    fetchedRevision: null,
+    fetchedIdentity: null,
     lastTransportError: null,
     lastDecision: null,
-    lineage: { lastAppliedRevision: null }
+    lastLineageChange: null,
+    lineage: createInitialLineage()
   };
+}
+
+function sameIdentity(a, b) {
+  return Boolean(a) && Boolean(b) && a.stateGeneration === b.stateGeneration && a.revision === b.revision;
 }
 
 /**
@@ -63,7 +83,10 @@ export function computeProtection(mode, diagnostics, source) {
   if (active.pac === ActivePac.Previous || diagnostics.status !== Status.Applied) return Protection.LastKnownGood;
   if (mode === StateSource.Fixture) return Protection.Current;
   const fetchedOk = Boolean(source && source.lastFetch && source.lastFetch.result === "OK");
-  return fetchedOk && source.fetchedRevision === active.revision ? Protection.Current : Protection.LastKnownGood;
+  const current = fetchedOk && source.browserProxy === "READY" &&
+    sameIdentity(source.fetchedIdentity, source.lineage && source.lineage.appliedIdentity) &&
+    source.fetchedIdentity.revision === active.revision;
+  return current ? Protection.Current : Protection.LastKnownGood;
 }
 
 function sameEndpoint(lastApplied, endpoint) {
@@ -71,11 +94,19 @@ function sameEndpoint(lastApplied, endpoint) {
   return Boolean(applied) && applied.host === endpoint.host && applied.port === endpoint.port;
 }
 
+function short(generation) {
+  return generation ? generation.slice(0, 8) : "none";
+}
+
+function describe(identity) {
+  return short(identity.stateGeneration) + "/" + identity.revision;
+}
+
 /**
  * @param {{
  *   mode: "Fixture" | "Native",
  *   controller: { apply(reason: string, snapshot?: any): Promise<any>, clear(): Promise<any>, refresh(): Promise<any>, read(): Promise<any> },
- *   provider?: { hostName: string, protocolVersion: number, getState(): Promise<any> },
+ *   provider?: { hostName: string, protocolVersion: number, getSnapshot(): Promise<any> },
  *   storage?: { read(): Promise<any>, write(value: any): Promise<void> },
  *   now?: () => string
  * }} deps
@@ -100,7 +131,13 @@ export function createRoutingCoordinator(deps) {
     const base = createInitialSourceDiagnostics(deps.provider);
     const stored = await deps.storage.read();
     if (!stored || stored.sourceVersion !== SOURCE_DIAGNOSTICS_VERSION) return base;
-    return { ...base, ...stored, hostName: base.hostName, protocolVersion: base.protocolVersion };
+    return {
+      ...base,
+      ...stored,
+      hostName: base.hostName,
+      protocolVersion: base.protocolVersion,
+      lineage: { ...createInitialLineage(), ...stored.lineage }
+    };
   }
 
   function view(diagnostics, source) {
@@ -123,7 +160,7 @@ export function createRoutingCoordinator(deps) {
 
   async function fetchSnapshot() {
     try {
-      return await deps.provider.getState();
+      return await deps.provider.getSnapshot();
     } catch (error) {
       return {
         ok: false,
@@ -131,9 +168,49 @@ export function createRoutingCoordinator(deps) {
         at: now(),
         transport: "ERROR",
         service: "UNKNOWN",
+        state: "UNKNOWN",
+        browserProxy: "UNKNOWN",
+        identity: null,
+        stats: null,
         error: { code: "provider_exception", message: String(error && error.message ? error.message : error), hostErrorCode: null }
       };
     }
+  }
+
+  async function finish(source, diagnostics) {
+    await deps.storage.write(source);
+    return view(diagnostics, source);
+  }
+
+  /**
+   * Applies the lineage policy to a fetched identity and advances the lineage in place when
+   * the snapshot is accepted.
+   * @returns {{ rejected: { kind: string, message: string } | null, newLineage: boolean }}
+   */
+  function admit(source, identity) {
+    const lineage = source.lineage;
+    if (lineage.retiredGenerations.includes(identity.stateGeneration)) {
+      return {
+        rejected: { kind: Decision.RetiredGeneration, message: "generation " + short(identity.stateGeneration) + " was replaced" },
+        newLineage: false
+      };
+    }
+    let newLineage = false;
+    if (lineage.currentGeneration === identity.stateGeneration) {
+      if (lineage.acceptedRevision !== null && identity.revision < lineage.acceptedRevision) {
+        return {
+          rejected: { kind: Decision.StaleSnapshot, message: "revision " + identity.revision + " < accepted " + lineage.acceptedRevision },
+          newLineage: false
+        };
+      }
+    } else if (lineage.currentGeneration !== null) {
+      lineage.retiredGenerations = [lineage.currentGeneration, ...lineage.retiredGenerations].slice(0, MAX_RETIRED_GENERATIONS);
+      source.lastLineageChange = { from: lineage.currentGeneration, to: identity.stateGeneration, at: now() };
+      newLineage = true;
+    }
+    lineage.currentGeneration = identity.stateGeneration;
+    lineage.acceptedRevision = identity.revision;
+    return { rejected: null, newLineage };
   }
 
   async function syncNative(reason) {
@@ -141,6 +218,8 @@ export function createRoutingCoordinator(deps) {
     const fetched = await fetchSnapshot();
     source.transport = fetched.transport;
     source.service = fetched.service;
+    source.state = fetched.state;
+    source.browserProxy = fetched.browserProxy;
 
     if (!fetched.ok) {
       source.lastFetch = {
@@ -148,50 +227,61 @@ export function createRoutingCoordinator(deps) {
         at: fetched.at,
         requestId: fetched.requestId,
         errorCode: fetched.error.code,
-        hostErrorCode: fetched.error.hostErrorCode
+        hostErrorCode: fetched.error.hostErrorCode,
+        identity: fetched.identity,
+        stats: fetched.stats
       };
       if (TRANSPORT_ERROR_CODES.has(fetched.error.code)) {
         source.lastTransportError = { code: fetched.error.code, message: fetched.error.message, at: fetched.at };
       }
       decide(source, Decision.FetchFailed, fetched.error.hostErrorCode || fetched.error.code);
-      const diagnostics = await controller.refresh();
-      await deps.storage.write(source);
-      return view(diagnostics, source);
+      return finish(source, await controller.refresh());
     }
 
     const snapshot = fetched.snapshot;
-    const revision = snapshot.state.revision;
-    source.lastFetch = { result: "OK", at: fetched.at, requestId: fetched.requestId, errorCode: null, hostErrorCode: null };
-    source.fetchedRevision = revision;
-    const appliedRevision = source.lineage.lastAppliedRevision;
+    const identity = snapshot.identity;
+    source.lastFetch = {
+      result: "OK",
+      at: fetched.at,
+      requestId: fetched.requestId,
+      errorCode: null,
+      hostErrorCode: null,
+      identity,
+      stats: fetched.stats
+    };
+    source.fetchedIdentity = identity;
 
-    if (appliedRevision !== null && revision < appliedRevision) {
-      decide(source, Decision.StaleSnapshot, "revision " + revision + " < applied " + appliedRevision);
-      const diagnostics = await controller.refresh();
-      await deps.storage.write(source);
-      return view(diagnostics, source);
+    const admission = admit(source, identity);
+    if (admission.rejected) {
+      decide(source, admission.rejected.kind, admission.rejected.message);
+      return finish(source, await controller.refresh());
     }
+    const lineageNote = admission.newLineage ? " (new lineage)" : "";
 
-    if (appliedRevision !== null && revision === appliedRevision) {
+    if (snapshot.browserProxy.status !== "Ready") {
+      decide(source, Decision.BrowserProxyUnavailable, "state " + describe(identity) + " not applied" + lineageNote);
+      return finish(source, await controller.refresh());
+    }
+    const endpoint = snapshot.browserProxy.endpoint;
+
+    if (sameIdentity(source.lineage.appliedIdentity, identity)) {
       const current = await controller.refresh();
       const stillActive = current.status === Status.Applied && current.active.pac === ActivePac.Current &&
-        current.active.revision === revision && sameEndpoint(current.lastApplied, snapshot.proxyEndpoint);
+        current.active.revision === identity.revision && sameEndpoint(current.lastApplied, endpoint);
       if (stillActive) {
-        decide(source, Decision.Unchanged, "revision " + revision);
-        await deps.storage.write(source);
-        return view(current, source);
+        decide(source, Decision.Unchanged, describe(identity));
+        return finish(source, current);
       }
     }
 
-    const diagnostics = await controller.apply(reason, snapshot);
-    if (diagnostics.status === Status.Applied && diagnostics.lastApplied && diagnostics.lastApplied.revision === revision) {
-      source.lineage = { lastAppliedRevision: revision };
-      decide(source, Decision.Applied, "revision " + revision);
+    const diagnostics = await controller.apply(reason, { state: snapshot.state, proxyEndpoint: endpoint });
+    if (diagnostics.status === Status.Applied && diagnostics.lastApplied && diagnostics.lastApplied.revision === identity.revision) {
+      source.lineage.appliedIdentity = { stateGeneration: identity.stateGeneration, revision: identity.revision };
+      decide(source, Decision.Applied, describe(identity) + lineageNote);
     } else {
       decide(source, Decision.ApplyFailed, diagnostics.status);
     }
-    await deps.storage.write(source);
-    return view(diagnostics, source);
+    return finish(source, diagnostics);
   }
 
   async function status() {
@@ -204,14 +294,13 @@ export function createRoutingCoordinator(deps) {
     if (mode === StateSource.Fixture) return view(diagnostics, null);
     const source = await loadSource();
     if (diagnostics.lastApplied === null && diagnostics.status !== Status.Error) {
-      // An explicit clear starts a new lineage: the next Service snapshot is accepted at any revision.
-      source.lineage = { lastAppliedRevision: null };
+      // Clearing removes the PAC, not the lineage: replays stay rejected after a clear.
+      source.lineage.appliedIdentity = null;
       decide(source, Decision.Cleared, null);
     } else {
       decide(source, Decision.ClearFailed, diagnostics.status);
     }
-    await deps.storage.write(source);
-    return view(diagnostics, source);
+    return finish(source, diagnostics);
   }
 
   return Object.freeze({

@@ -73,21 +73,12 @@ public class ProcessTests
     }
 
     [Fact]
-    public async Task GetState_OverRealProcess_ReportsServiceUnavailable()
-    {
-        var run = await RunAsync(Frames.Of(Frames.Request("getState", "g-1")), Chrome);
-
-        var response = Assert.Single(Frames.Parse(run.Stdout));
-        Assert.Equal(ProtocolV1.Errors.ServiceUnavailable, response.GetProperty("error").GetProperty("code").GetString());
-    }
-
-    [Fact]
     public async Task SequentialAndMalformed_OverRealProcess_StdoutIsPure()
     {
         var run = await RunAsync(Frames.Concat(
             Frames.Of(Frames.Request("ping", "a")),
             Frames.Of("{broken"),
-            Frames.Of(Frames.Request("getState", "b")),
+            Frames.Of(Frames.Request("getStatePage", "b")),
             Frames.Of(Frames.Request("nope", "c"))), Chrome);
 
         Assert.Equal(ExitCodes.CleanEof, run.ExitCode);

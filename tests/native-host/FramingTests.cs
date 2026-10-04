@@ -18,14 +18,14 @@ public class FramingTests
     }
 
     [Fact]
-    public async Task GetState_WithFakeService_Succeeds()
+    public async Task GetStateManifest_WithFakeService_Succeeds()
     {
-        var client = FakeServiceClient.Returning(SampleState.Snapshot());
-        var run = await HostHarness.RunAsync(Frames.Of(Frames.Request("getState")), client);
+        var client = FakeServiceClient.Default();
+        var run = await HostHarness.RunAsync(Frames.Of(Frames.Request("getStateManifest")), client);
 
         var response = Assert.Single(run.Responses);
         Assert.True(response.GetProperty("ok").GetBoolean());
-        Assert.Equal(43, response.GetProperty("result").GetProperty("state").GetProperty("revision").GetInt32());
+        Assert.Equal(43, response.GetProperty("result").GetProperty("revision").GetInt32());
         Assert.Equal(1, client.Calls);
     }
 
@@ -143,10 +143,10 @@ public class FramingTests
     [Fact]
     public async Task SequentialMessages_AreAnsweredInOrder()
     {
-        var client = FakeServiceClient.Returning(SampleState.Snapshot());
+        var client = FakeServiceClient.Default();
         var run = await HostHarness.RunAsync(Frames.Concat(
             Frames.Of(Frames.Request("ping", "s1")),
-            Frames.Of(Frames.Request("getState", "s2")),
+            Frames.Of(Frames.Request("getStateManifest", "s2")),
             Frames.Of("{"),
             Frames.Of(Frames.Request("ping", "s4"))), client);
 
@@ -171,7 +171,7 @@ public class FramingTests
     public async Task Stdout_ContainsOnlyFrames_AndLogsGoToLogSink()
     {
         var run = await HostHarness.RunAsync(Frames.Concat(
-            Frames.Of(Frames.Request("ping")), Frames.Of("garbage"), Frames.Of(Frames.Request("getState"))));
+            Frames.Of(Frames.Request("ping")), Frames.Of("garbage"), Frames.Of(Frames.Request("getStateManifest"))));
 
         Assert.Equal(3, run.Responses.Count);
         Assert.NotEmpty(run.Log);

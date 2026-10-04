@@ -3,15 +3,19 @@
 ## Сейчас
 
 - Ветка: `main`.
-- Checkpoint commits: `01b9212` (Phase 0A–2), `5aed8e5` (Phase 3). Phase 4 поверх них не закоммичен.
+- Checkpoint commits: `01b9212` (Phase 0A–2), `5aed8e5` (Phase 3), `5a99665` (Phase 4). Phase 5 не закоммичен ни здесь, ни в Vpn-gateway.
 - Phase 0A: **PASS** в Yandex Browser и Chrome.
 - Phase 0B: **PASS в Yandex Browser**. Chrome намеренно не тестировался.
 - Phase 1: **PASS, автоматические тесты** (доменный слой).
 - Phase 2: **PASS, автоматические тесты** (PAC compiler).
 - Phase 3: **FULL PASS в Yandex Browser** (production MV3 extension, fixture state).
-- Phase 4: production native state transport. **PASS, автоматические тесты**. Ручная проверка необязательна (`docs/phase4-acceptance.md`).
-- `npm test`: 330 тестов, все PASS: 107 domain, 56 PAC, 162 extension, 5 integration.
-- `npm run test:native-host`: 116 тестов xUnit, все PASS.
+- Phase 4: production native state transport. **PASS, автоматические тесты**.
+- Phase 5: интеграция с VPN Route Service. **FULL PASS** (453 + 203 xUnit + 5 E2E; Yandex + production host + live Service). Детали: `docs/phase5-acceptance.md`.
+- `npm test`: 453 теста, все PASS (domain, PAC, extension, integration, security).
+- `npm run test:native-host`: 203 теста xUnit, все PASS.
+- `npm run test:e2e`: 5 сценариев, все PASS.
+- Vpn-gateway `dotnet test SelectiveVpnRouter.sln -c Release`: Core 435, BrowserRouting 143, Proxy 3 — PASS.
+- Установленная служба VPN Route уже содержит Phase 5. Read-only проверка `node scripts\check-live-service.js`: state AVAILABLE, browserProxy UNAVAILABLE, revision 0, 0 правил.
 - `dist/extension` собран как Fixture (normal). `dist/native-host` опубликован.
 - Production host и spike host **не зарегистрированы**.
 
@@ -162,11 +166,10 @@ Lookup около 3 µs в vm Node и практически не зависит
 
 Подробно: `docs/phase4-native-state-transport.md`. Протокол: `docs/native-messaging-protocol-v1.md`.
 
-Цепочка: Native build extension → `sendNativeMessage("com.vpnroute.browser", getState)` → `SelectiveVpnRouter.NativeHost.exe` → `IServiceStateClient`. Service не подключён: production-клиент `UnavailableServiceStateClient` всегда отвечает `service_unavailable`.
+Ниже — то, что из Phase 4 действует до сих пор. `getState`, `UnavailableServiceStateClient` и revision-only lineage заменены в Phase 5.
 
 - Host: `src/native-host/`, net10.0, без NuGet.
-  - Publish: `npm run build:native-host` → `dist/native-host/SelectiveVpnRouter.NativeHost.exe`, self-contained single file win-x64, 73 553 737 bytes, без trimming (trimmed — 12.5 MiB, отложено).
-  - Команды: `ping` и `getState`.
+  - Publish: `npm run build:native-host` → `dist/native-host/SelectiveVpnRouter.NativeHost.exe`, self-contained single file win-x64, около 73.6 MB, без trimming.
   - Проверяет origin по argv и `--parent-window`.
   - Лимиты: запрос 64 KiB, ответ 1 MiB.
   - Stdout — только кадры, логи — в stderr.
@@ -177,19 +180,44 @@ Lookup около 3 µs в vm Node и практически не зависит
 - Extension, режим фиксируется при сборке:
   - `build:extension` / `:large` — Fixture, permissions `proxy` + `storage`;
   - `build:extension:native` — Native, плюс `nativeMessaging`, без fixture-модуля.
-- `state/native-state-provider.js`:
-  - таймаут 5 s;
-  - строгий конверт, `requestId`, `protocolVersion`;
-  - state через Phase 1, endpoint через Phase 2.
-- `state/snapshot.js` — `BrowserRoutingSnapshot { state, proxyEndpoint }`.
-- `runtime/routing-coordinator.js` — revision policy:
-  - stale `<` applied отклоняется;
-  - `==` — unchanged без `set`;
-  - `>` — apply.
 - Fail-safe: при ошибке нет clear, DIRECT и fixture fallback, действует last-known-good. Routing protection: `CURRENT` / `LAST_KNOWN_GOOD` / `NOT_PROTECTED`.
 - Proxy controller Phase 3 расширен: `apply(reason, snapshot?)`, опциональный `loadState`, `read()`.
 - Storage: `vpnRouteDiagnostics` и `vpnRouteStateSource` (lineage + диагностика транспорта), правил нет.
-- Мутационная проверка: 27 внесённых ошибок ловятся (17 extension и build, 10 host).
+
+## Phase 5 — интеграция с VPN Route Service
+
+Подробно: `docs/phase5-service-integration.md`. Протоколы: `docs/native-messaging-protocol-v1.md` (extension ↔ host), `docs/service-ipc-browser-routing-v1.md` (host ↔ Service). Ручная проверка: `docs/phase5-acceptance.md`.
+
+Цепочка:
+
+```text
+Native build
+  → getStateManifest / getStatePage
+  → host
+  → \\.\pipe\SelectiveVpnRouter.BrowserRouting
+  → BrowserRoutingStateStore в Service (Vpn-gateway)
+```
+
+- Service (Vpn-gateway, `docs/browser-routing-service.md`):
+  - store в `%ProgramData%\SelectiveVpnRouter\browser-routing-state.json`: атомарная запись, generation UUID, revision; при порче — Unavailable, без подмены пустым Direct;
+  - отдельный read-only pipe: protected DACL, Interactive ReadWrite, Network Deny, `FirstPipeInstance`;
+  - методы `getManifest` и `getPage`, страницы ≤ 512 KiB;
+  - `browserProxy` всегда `Unavailable`.
+- Host 0.5.0:
+  - `BrowserRoutingPipeClient`: `Identification`, проверка владельца pipe (SYSTEM / Administrators / текущий пользователь), connect 1 s, call 3 s;
+  - две команды на два метода, коды ошибок только из allowlist;
+  - test seam `VPN_ROUTE_TEST_SERVICE_PIPE`: только `SelectiveVpnRouter.BrowserRouting.Test.<32 hex>`.
+- Extension:
+  - snapshot `{identity: {stateGeneration, revision}, state, browserProxy}`;
+  - provider собирает все страницы, проверяет identity и курсоры, при `snapshot_changed` делает 2 попытки, partial apply нет;
+  - coordinator: lineage generation + revision, retired generations (≤ 16), решение `browser_proxy_unavailable`;
+  - popup: Service, Browser state, Browser proxy, generation, lineage change, pages.
+- Golden vectors JS/C#: `contracts/browser-routing-v1/golden-vectors.json`, копия в Vpn-gateway `tests/contracts`.
+- E2E (`tests/e2e/`), Service test host → pipe → host exe → provider → coordinator:
+  - 10000 типовых правил: 5 страниц, 2.37 MB;
+  - 10000 худших: 139 страниц, крупнейший кадр 513 748 B, 71.4 MB, 13.3 s;
+  - плюс Unavailable, churn и Service gone.
+- Security (`tests/security/phase5-security.test.js` и source guards в обоих репо): нет TCP, нет Everyone / AuthUsers / Users, ровно 2 метода, нет generic relay, 17891 только в Fixture config.
 
 ## Файлы
 
@@ -197,8 +225,14 @@ Lookup около 3 µs в vm Node и практически не зависит
 - `src/domain/browser-routing/`, `tests/domain/browser-routing/` — Phase 1.
 - `src/pac/`, `tests/pac/`, `scripts/measure-pac.js` — Phase 2.
 - `src/extension/`, `tests/extension/`, `scripts/build-extension.js`, `scripts/large-fixture.js`, `scripts/extension-id.js` — Phase 3–4. `dist/` генерируется.
-- `src/native-host/`, `tests/native-host/`, `tests/integration/`, `scripts/build-native-host.js`, `scripts/native-host/` — Phase 4.
-- `docs/phase0-acceptance.md`, `docs/phase0b-acceptance.md`, `docs/browser-routing-contract-v1.md`, `docs/pac-compiler-v1.md`, `docs/phase3-extension-runtime.md`, `docs/phase3-acceptance.md`, `docs/native-messaging-protocol-v1.md`, `docs/phase4-native-state-transport.md`, `docs/phase4-acceptance.md`, `docs/examples/`.
+- `src/native-host/`, `tests/native-host/`, `tests/integration/`, `scripts/build-native-host.js`, `scripts/native-host/` — Phase 4–5.
+- `contracts/`, `tests/e2e/`, `tests/security/`, `scripts/check-live-service.js`, `scripts/phase5-acceptance.ps1` — Phase 5.
+- `docs/phase0-acceptance.md`, `docs/phase0b-acceptance.md`, `docs/browser-routing-contract-v1.md`, `docs/pac-compiler-v1.md`, `docs/phase3-extension-runtime.md`, `docs/phase3-acceptance.md`, `docs/native-messaging-protocol-v1.md`, `docs/phase4-native-state-transport.md`, `docs/phase4-acceptance.md`, `docs/service-ipc-browser-routing-v1.md`, `docs/phase5-service-integration.md`, `docs/phase5-acceptance.md`, `docs/examples/`.
+- Vpn-gateway, Phase 5:
+  - `src/SelectiveVpnRouter.Core/BrowserRouting/`;
+  - `src/SelectiveVpnRouter.Service/BrowserRoutingPipeHost.cs` и строка регистрации в `Program.cs`;
+  - `tests/SelectiveVpnRouter.BrowserRouting.Tests/`, `tests/SelectiveVpnRouter.BrowserRouting.TestHost/`, `tests/contracts/`;
+  - `docs/browser-routing-service.md`.
 
 ## Автоматические проверки
 
@@ -207,6 +241,7 @@ Lookup около 3 µs в vm Node и практически не зависит
 ```text
 npm test
 npm run test:native-host
+npm run test:e2e
 npm run build:extension:native
 npm run build:extension:large
 npm run build:native-host -- --tests
@@ -226,17 +261,20 @@ dotnet run --project spike\socks5-logger\Socks5Logger.csproj -- --self-test
 - Как Chromium передаёт в PAC IPv6 host, не проверено.
 - `scope: "regular"`, инкогнито не настраивается.
 - Неклассифицируемый host идёт в VPN даже при `defaultRoute = Direct` (fail-closed).
-- Native: Service connector отсутствует, production `getState` всегда `service_unavailable`. Успешный путь проверен только с fake Service и fake host.
-- Production host в браузере не запускался; это необязательный `docs/phase4-acceptance.md`.
-- Лимит Chromium 1 MiB на ответ host: около 10000 правил в JSON не помещаются (`response_too_large`). Нужен компактный формат или разбиение.
-- Revision lineage без epoch: сброс ревизии на стороне Service приведёт к `stale_snapshot`. Выход — явный Clear.
+- Explicit browser proxy в Service нет: production manifest всегда `browserProxy: Unavailable`, PAC из Service не применяется. Успешный apply проверен только в E2E с test host, где proxy Ready.
+- Правила в Service никто не редактирует (нет UI и методов записи). Live state пустой: revision 0, Direct.
+- Один процесс host на страницу. 10000 худших правил — около 13 s, типовые — меньше 1 s.
+- Retired generations ограничены 16.
+- Native-сборка Phase 4 с host Phase 5 несовместима (`getState` удалён).
+- Popup Native mode: нижняя секция «State» может показывать LKG Phase 3 fixture, пока fetched revision от Service другой — UX follow-up, не блокер.
 - Exe не подписан. Manifest указывает абсолютный путь в рабочую копию.
 - `connectNative` не используется и не проверялся.
 
 ## Архитектурные правила
 
 - VPN Route Service — единственный authoritative source of truth для правил.
-- Native host — тупой bridge: правил не хранит и не кэширует, файлы, реестр, сеть и процессы не трогает.
+- Native host — тупой bridge: правил не хранит и не кэширует, файлы, реестр, сеть и процессы не трогает. Единственный выход наружу — read-only pipe Service с двумя методами.
+- `stateGeneration` и `revision` создаёт только Service. Extension их проверяет, host передаёт.
 - Extension владеет proxy/PAC в Chromium и получает состояние от Service. Правил в `chrome.storage` нет.
 - TabDock позже станет вторым клиентом того же контракта. Сейчас не трогается.
 - Обход localhost/private/link-local и маршрут для IP-литералов — forced-local policy PAC-компилятора, не matcher и не BrowserRoutingRule.
@@ -245,7 +283,7 @@ dotnet run --project spike\socks5-logger\Socks5Logger.csproj -- --self-test
 
 ## Не начато
 
-- Service connector в host (named pipe к VPN Route Service) и `getState` на стороне Service.
-- `upsertRule` / `deleteRule`, UI правил, push-обновления (`connectNative`).
-- ExplicitBrowserProxy, VPN-side DNS, TabDock, Portable Bootstrap и установщик.
-- Изменения `Vpn-gateway`.
+- Explicit Browser Proxy (loopback SOCKS5 в Service) и переход `browserProxy` в Ready.
+- VPN-side DNS, forwarding, QUIC.
+- Редактирование правил: UI, `upsertRule` / `deleteRule`, методы записи в Service; push-обновления (`connectNative`).
+- TabDock, Portable Bootstrap, установщик, MSI, релиз.

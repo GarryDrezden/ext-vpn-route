@@ -21,11 +21,29 @@ function renderNative(source) {
   show("native-transport", source.transport, toneFor(source.transport));
   show("native-protocol", source.protocolVersion);
   show("native-service", source.service, toneFor(source.service));
+  show("native-state", source.state, toneFor(source.state));
+  show("native-browser-proxy", source.browserProxy, source.browserProxy === "READY" ? "ok" : toneFor(source.browserProxy));
   const f = source.lastFetch;
   show("native-last-fetch", f
     ? f.result + (f.errorCode ? " (" + (f.hostErrorCode || f.errorCode) + ")" : "") + " at " + f.at
     : "never", f ? (f.result === "OK" ? "ok" : "bad") : "warn");
-  show("native-fetched-revision", source.fetchedRevision);
+  const fetched = source.fetchedIdentity;
+  show("native-fetched-revision", fetched ? "revision " + fetched.revision : null);
+  show("native-generation", fetched ? fetched.stateGeneration : null);
+  const lineage = source.lineage || {};
+  const appliedIdentity = lineage.appliedIdentity;
+  show("native-applied-identity", appliedIdentity
+    ? "revision " + appliedIdentity.revision + (fetched && appliedIdentity.stateGeneration !== fetched.stateGeneration
+      ? " of previous generation " + appliedIdentity.stateGeneration.slice(0, 8) : "")
+    : "none");
+  const change = source.lastLineageChange;
+  show("native-lineage-change", change ? change.from.slice(0, 8) + " → " + change.to.slice(0, 8) + " at " + change.at : "none",
+    change ? "warn" : "");
+  const stats = f && f.stats;
+  show("native-pages", stats
+    ? stats.pages + " pages, largest " + (stats.largestPageBytes / 1024).toFixed(1) + " KiB, total " +
+      (stats.totalBytes / 1024).toFixed(1) + " KiB, attempts " + stats.attempts
+    : null);
   const decision = source.lastDecision;
   show("native-decision", decision ? decision.kind + (decision.message ? ": " + decision.message : "") : null,
     decision && (decision.kind === "applied" || decision.kind === "unchanged") ? "ok" : decision ? "warn" : "");

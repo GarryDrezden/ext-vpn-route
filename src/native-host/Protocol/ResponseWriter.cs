@@ -16,10 +16,14 @@ internal static class ResponseWriter
         [ProtocolV1.Errors.UnknownCommand] = "Command is not supported.",
         [ProtocolV1.Errors.ForbiddenOrigin] = "Caller origin is not allowed.",
         [ProtocolV1.Errors.ServiceUnavailable] = "VPN Route Service is unavailable.",
+        [ProtocolV1.Errors.ServiceUntrusted] = "VPN Route Service endpoint is not owned by a trusted account.",
         [ProtocolV1.Errors.ServiceTimeout] = "VPN Route Service did not respond in time.",
         [ProtocolV1.Errors.ServiceError] = "VPN Route Service request failed.",
-        [ProtocolV1.Errors.InvalidServiceResponse] = "VPN Route Service returned an invalid state snapshot.",
-        [ProtocolV1.Errors.ResponseTooLarge] = "State snapshot exceeds the native messaging size limit.",
+        [ProtocolV1.Errors.InvalidServiceResponse] = "VPN Route Service returned an invalid response.",
+        [ProtocolV1.Errors.BrowserStateUnavailable] = "VPN Route Service has no usable browser routing state.",
+        [ProtocolV1.Errors.SnapshotChanged] = "Browser routing state changed; restart the snapshot.",
+        [ProtocolV1.Errors.InvalidCursor] = "State page cursor is out of range.",
+        [ProtocolV1.Errors.ResponseTooLarge] = "Response exceeds the native messaging size limit.",
         [ProtocolV1.Errors.InternalError] = "Native host internal error."
     };
 
@@ -32,6 +36,10 @@ internal static class ResponseWriter
             writeResult(writer);
         });
     }
+
+    /// <summary>Success envelope around an already validated JSON value, copied byte for byte.</summary>
+    public static byte[] SuccessRaw(string requestId, byte[] rawResult) =>
+        Success(requestId, writer => writer.WriteRawValue(rawResult, skipInputValidation: false));
 
     public static byte[] Error(string? requestId, string code)
     {

@@ -27,7 +27,7 @@
 - хранение правил (VPN Route Service — единственный источник истины);
 - portable-поставка.
 
-Здесь лежит Native Messaging Host `com.vpnroute.browser` (`src/native-host/`) — мост между расширением и Service без собственной бизнес-логики. Он правил не хранит и не кэширует, файлы, реестр, сеть и процессы не трогает.
+Здесь лежит Native Messaging Host `com.vpnroute.browser` (`src/native-host/`) — мост между расширением и Service без собственной бизнес-логики. Он правил не хранит и не кэширует, файлы, реестр, сеть и процессы не трогает. Состояние он читает у Service по read-only named pipe: два метода, постранично.
 
 ## Поведение V1
 
@@ -83,19 +83,27 @@ VPN Route Service
 - Phase 1, доменная модель и matcher: **PASS, автоматические тесты**. `src/domain/browser-routing/`, контракт `docs/browser-routing-contract-v1.md`.
 - Phase 2, PAC compiler: **PASS, автоматические тесты**. `src/pac/`, описание `docs/pac-compiler-v1.md`.
 - Phase 3, production MV3 extension из фиксированного состояния: **FULL PASS в Yandex Browser**, включая PAC 382 KB и read-back `data_match`. `src/extension/`, `docs/phase3-extension-runtime.md`, результаты `docs/phase3-acceptance.md`.
-- Phase 4, production native state transport (extension → `com.vpnroute.browser` → интерфейс клиента Service): **PASS, автоматические тесты**. Service ещё не подключён, `getState` отвечает `service_unavailable`. `docs/phase4-native-state-transport.md`, протокол `docs/native-messaging-protocol-v1.md`.
+- Phase 4, production native state transport (extension → `com.vpnroute.browser` → интерфейс клиента Service): **PASS, автоматические тесты**. `docs/phase4-native-state-transport.md`.
+- Phase 5, интеграция с VPN Route Service (host → `\\.\pipe\SelectiveVpnRouter.BrowserRouting` → authoritative state, постранично, generation + revision): **FULL PASS** — автоматические тесты, E2E 10k rules, Yandex Browser с production host и реальной службой. Explicit browser proxy в Service ещё нет, PAC из Service не применяется (`browser_proxy_unavailable`). `docs/phase5-service-integration.md`, `docs/phase5-acceptance.md`, протоколы `docs/native-messaging-protocol-v1.md` и `docs/service-ipc-browser-routing-v1.md`.
 
 Временный код feasibility-фазы лежит в `spike/` и в продукт не переносится.
 
 ```text
 npm test                          # Node: domain, PAC, extension, integration
 npm run test:native-host          # xUnit: production native host
+npm run test:e2e                  # Service test host → pipe → host exe → extension, 10000 правил
+node scripts/check-live-service.js  # read-only: host exe → установленная служба
 npm run build:extension           # dist/extension, Fixture (по умолчанию)
 npm run build:extension:native    # dist/extension, Native: состояние от native host
 npm run build:extension:large     # dev-only: ~10000 правил
 npm run build:native-host         # dist/native-host/SelectiveVpnRouter.NativeHost.exe + smoke
 npm run measure:pac
 ```
+
+Checkout Vpn-gateway ищется рядом, в `..\vpn-gateway`, или по `VPN_GATEWAY_ROOT`:
+
+- `test:e2e` без него падает: он собирает оттуда Service test host;
+- межрепозиторные проверки в `npm test` без него пропускаются.
 
 Регистрация host — только HKCU, без UAC: `scripts\native-host\register.ps1`, `status.ps1`, `unregister.ps1`.
 

@@ -92,11 +92,60 @@ export function createFakeNativeRuntime(handler) {
   return runtime;
 }
 
-/** A VPN Route native host answering getState with the given state and endpoint. */
-export function nativeHostReturning(state, proxyEndpoint = { host: "127.0.0.1", port: 17891 }) {
-  return (hostName, message) => ({
-    response: { protocolVersion: 1, requestId: message.requestId, ok: true, result: { state: clone(state), proxyEndpoint } }
-  });
+export const GEN_A = "9b2f6c1e-1d2a-4f57-9a43-3f2a9d7c1b10";
+export const GEN_B = "4c1d8e2f-7a6b-4e3c-9d2a-1b0f5e6d7c8a";
+export const TEST_ENDPOINT = Object.freeze({ host: "127.0.0.1", port: 17891 });
+export const READY = Object.freeze({ status: "Ready", endpoint: TEST_ENDPOINT });
+export const UNAVAILABLE = Object.freeze({ status: "Unavailable", endpoint: null });
+
+export function hostOk(message, result) {
+  return { response: { protocolVersion: 1, requestId: message.requestId, ok: true, result } };
+}
+
+export function hostError(message, code, text = "failure") {
+  return { response: { protocolVersion: 1, requestId: message.requestId, ok: false, error: { code, message: text } } };
+}
+
+/**
+ * A VPN Route native host relaying a paged Service snapshot of `state`.
+ * options: generation, browserProxy, pageSize, pageBudgetBytes.
+ */
+export function nativeHostServing(state, options = {}) {
+  const generation = options.generation || GEN_A;
+  const browserProxy = options.browserProxy === undefined ? READY : options.browserProxy;
+  const pageSize = options.pageSize || 2;
+  return (hostName, message) => {
+    if (message.command === "getStateManifest") {
+      return hostOk(message, {
+        schemaVersion: state.schemaVersion,
+        stateGeneration: generation,
+        revision: state.revision,
+        defaultRoute: state.defaultRoute,
+        ruleCount: state.rules.length,
+        pageBudgetBytes: options.pageBudgetBytes || 520192,
+        browserProxy: clone(browserProxy)
+      });
+    }
+    if (message.command === "getStatePage") {
+      if (message.stateGeneration !== generation || message.revision !== state.revision) return hostError(message, "snapshot_changed");
+      if (message.startIndex >= state.rules.length) return hostError(message, "invalid_cursor");
+      const rules = state.rules.slice(message.startIndex, message.startIndex + pageSize);
+      const end = message.startIndex + rules.length;
+      return hostOk(message, {
+        stateGeneration: generation,
+        revision: state.revision,
+        startIndex: message.startIndex,
+        nextIndex: end === state.rules.length ? null : end,
+        rules: clone(rules)
+      });
+    }
+    return hostError(message, "unknown_command");
+  };
+}
+
+/** Back-compat helper for tests that only care about state + endpoint readiness. */
+export function nativeHostReturning(state, browserProxy = READY, generation = GEN_A) {
+  return nativeHostServing(state, { browserProxy, generation });
 }
 
 export function nativeHostFailing(code, message = "failure") {
