@@ -15,10 +15,20 @@ var testPipe = Environment.GetEnvironmentVariable(ServiceIpcV1.TestPipeVariable)
 var pipeName = ServiceIpcV1.ResolvePipeName(testPipe);
 if (!string.IsNullOrEmpty(testPipe))
     log.Info(pipeName is null ? "test service pipe override rejected" : "test service pipe override active");
+var testEventsPipe = Environment.GetEnvironmentVariable(ServiceIpcV1.TestEventsPipeVariable);
+var eventsPipeName = ServiceIpcV1.ResolveEventsPipeName(testEventsPipe);
+if (!string.IsNullOrEmpty(testEventsPipe))
+    log.Info(eventsPipeName is null ? "test service events pipe override rejected" : "test service events pipe override active");
 
 try
 {
-    return await NativeHostApp.RunAsync(stdin, stdout, args, new BrowserRoutingPipeClient(pipeName), log);
+    return await NativeHostApp.RunAsync(
+        stdin,
+        stdout,
+        args,
+        new BrowserRoutingPipeClient(pipeName),
+        new BrowserRoutingEventsPipeClient(eventsPipeName),
+        log);
 }
 catch (Exception ex)
 {

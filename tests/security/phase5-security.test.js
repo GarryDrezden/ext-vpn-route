@@ -88,7 +88,13 @@ test("Native extension build: no fixture, no spike endpoint in use, no rules in 
         assert.equal(text.includes("PHASE3_PROXY_ENDPOINT"), false, name);
         assert.equal(text.includes("17891"), false, name);
       }
-      assert.doesNotMatch(text, /\bfetch\(|new WebSocket|XMLHttpRequest|connectNative|setInterval\(/, name);
+      const connectNativeForbidden = name !== "extension/runtime/native-push-manager.js";
+      if (connectNativeForbidden) {
+        assert.doesNotMatch(text, /\bfetch\(|new WebSocket|XMLHttpRequest|connectNative|setInterval\(/, name);
+      } else {
+        assert.doesNotMatch(text, /\bfetch\(|new WebSocket|XMLHttpRequest|setInterval\(/, name);
+        assert.match(text, /connectNative/);
+      }
       assert.doesNotMatch(text, /dnsResolve\(|myIpAddress\(/, name);
     }
     const coordinator = readFileSync(path.join(outDir, "extension/runtime/routing-coordinator.js"), "utf8");

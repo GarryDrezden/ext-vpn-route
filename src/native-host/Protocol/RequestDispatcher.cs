@@ -5,7 +5,7 @@ using VpnRoute.NativeHost.Service;
 
 namespace VpnRoute.NativeHost.Protocol;
 
-internal readonly record struct DispatchResult(byte[] Response, string Command, string Outcome);
+internal readonly record struct DispatchResult(byte[] Response, string Command, string Outcome, bool EnterWatchMode = false);
 
 /// <summary>
 /// Validates a v1 request envelope and runs one of the fixed commands. Each state command maps to
@@ -106,7 +106,7 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
                 return Fail(requestId, "-", ProtocolV1.Errors.InvalidRequest);
 
             var command = commandElement.GetString();
-            if (command is ProtocolV1.Commands.Ping && !HasOnlyFields(root, BaseFields))
+            if (command is ProtocolV1.Commands.Ping or ProtocolV1.Commands.WatchEvents && !HasOnlyFields(root, BaseFields))
                 return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
             if (command is ProtocolV1.Commands.GetStateManifest && !HasOnlyFields(root, ManifestRequestFields))
                 return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
@@ -114,6 +114,7 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
             return command switch
             {
                 ProtocolV1.Commands.Ping => Ping(requestId),
+                ProtocolV1.Commands.WatchEvents => WatchEvents(requestId),
                 ProtocolV1.Commands.GetStateManifest => await ManifestAsync(requestId, root, cancellationToken).ConfigureAwait(false),
                 ProtocolV1.Commands.GetStatePage => await PageAsync(requestId, root, cancellationToken).ConfigureAwait(false),
                 ProtocolV1.Commands.UpsertRule => await UpsertRuleAsync(requestId, root, cancellationToken).ConfigureAwait(false),
@@ -136,6 +137,17 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
             writer.WriteEndObject();
         });
         return new DispatchResult(response, ProtocolV1.Commands.Ping, "ok");
+    }
+
+    private static DispatchResult WatchEvents(string requestId)
+    {
+        var response = ResponseWriter.Success(requestId, writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteString("command", ProtocolV1.Commands.WatchEvents);
+            writer.WriteEndObject();
+        });
+        return new DispatchResult(response, ProtocolV1.Commands.WatchEvents, "ok", EnterWatchMode: true);
     }
 
     private async Task<DispatchResult> ManifestAsync(string requestId, JsonElement root, CancellationToken cancellationToken)

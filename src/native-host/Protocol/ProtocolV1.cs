@@ -23,6 +23,7 @@ internal static class ProtocolV1
         public const string UpsertRule = "upsertRule";
         public const string DeleteRule = "deleteRule";
         public const string ResetRules = "resetRules";
+        public const string WatchEvents = "watchEvents";
     }
 
     public static class Errors

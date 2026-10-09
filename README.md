@@ -27,7 +27,9 @@
 - хранение правил (VPN Route Service — единственный источник истины);
 - portable-поставка.
 
-Здесь лежит Native Messaging Host `com.vpnroute.browser` (`src/native-host/`) — мост между расширением и Service без собственной бизнес-логики. Он правил не хранит и не кэширует, файлы, реестр, сеть и процессы не трогает. Состояние он читает у Service по read-only named pipe: два метода, постранично.
+Здесь лежит Native Messaging Host `com.vpnroute.browser` (`src/native-host/`) — мост между расширением и Service без собственной бизнес-логики. Он правил не хранит и не кэширует, файлы, реестр, сеть и процессы не трогает. Состояние он читает у Service по read-only named pipe (manifest + pages); **1.0.0 RC** добавляет push-синхронизацию через `watchEvents` / `connectNative`, с периодическим alarm как запасным опросом.
+
+**1.0.0 RC (desktop primary):** правила браузерной маршрутизации в первую очередь редактируются в desktop VPN Route (вкладка «Браузер»); popup расширения — спутник и быстрый контроль. Изменения из Service обычно подхватываются сразу по push (Native Host → `connectNative`); минутный alarm остаётся fallback.
 
 ## Поведение V1
 

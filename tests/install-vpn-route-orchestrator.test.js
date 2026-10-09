@@ -104,6 +104,21 @@ test("read-only verify script avoids write RPC names", () => {
   assert.doesNotMatch(js, /deleteRule\s*\(/);
   assert.doesNotMatch(js, /resetRules\s*\(/);
   assert.match(js, /browserRoutingWrite/);
+  assert.match(js, /--require-browser-routing-push/);
+});
+
+test("full install requires browserRoutingPush verify flag; CheckOnly does not", (t) => {
+  if (!existsSync(INSTALL_PS1) || !existsSync(HELPERS_PS1)) t.skip("gateway scripts missing");
+  const install = readFileSync(INSTALL_PS1, "utf8");
+  const helpers = readFileSync(HELPERS_PS1, "utf8");
+  assert.match(helpers, /RequireBrowserRoutingPush/);
+  assert.match(helpers, /--require-browser-routing-push/);
+  assert.match(install, /Invoke-VpnRouteReadOnlyIntegrationVerify -ExtensionRoot \$extensionRoot -RequireBrowserRoutingPush/);
+  const checkStart = install.indexOf("if ($CheckOnly)");
+  const checkEnd = install.indexOf("exit 0", checkStart);
+  const checkBlock = install.slice(checkStart, checkEnd);
+  assert.match(checkBlock, /Invoke-VpnRouteReadOnlyIntegrationVerify -ExtensionRoot \$extensionRoot/);
+  assert.doesNotMatch(checkBlock, /RequireBrowserRoutingPush/);
 });
 
 test("verify script does not use chrome.storage.local for drafts", () => {

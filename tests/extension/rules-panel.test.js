@@ -152,6 +152,13 @@ describe("executeRulesMutation", () => {
     assert.equal(d.rules.length, 2);
   });
 
+  test("conflict message is neutral (desktop + other clients)", () => {
+    assert.equal(
+      RulesMessage.conflict,
+      "Правила изменились. Список обновлён — проверьте изменения и сохраните ещё раз."
+    );
+  });
+
   test("conflict does not auto-resubmit", async () => {
     let calls = 0;
     const d = deps({

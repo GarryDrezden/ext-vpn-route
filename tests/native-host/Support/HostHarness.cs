@@ -91,6 +91,28 @@ internal sealed class FakeServiceClient(
     public static FakeServiceClient Default() => Returning(SampleService.ManifestReply());
 }
 
+internal sealed class FakeEventsClient(IReadOnlyList<ServicePushEvent> events) : IServiceEventsClient
+{
+    public static readonly FakeEventsClient Empty = new([]);
+
+    public async IAsyncEnumerable<ServicePushEvent> SubscribeAsync(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        foreach (var evt in events)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return evt;
+        }
+        try
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+}
+
 internal sealed record HostRun(int ExitCode, byte[] Stdout, List<JsonElement> Responses, List<string> Log);
 
 internal static class HostHarness
@@ -101,13 +123,20 @@ internal static class HostHarness
         byte[] stdin,
         IServiceStateClient? client = null,
         string[]? args = null,
-        TimeSpan? serviceTimeout = null)
+        TimeSpan? serviceTimeout = null,
+        IServiceEventsClient? eventsClient = null)
     {
         using var input = new MemoryStream(stdin);
         using var output = new MemoryStream();
         var log = new RecordingLog();
         var exitCode = await NativeHostApp.RunAsync(
-            input, output, args ?? ChromeArgs, client ?? FakeServiceClient.Unavailable(), log, serviceTimeout);
+            input,
+            output,
+            args ?? ChromeArgs,
+            client ?? FakeServiceClient.Unavailable(),
+            eventsClient ?? FakeEventsClient.Empty,
+            log,
+            serviceTimeout);
         var stdout = output.ToArray();
         return new HostRun(exitCode, stdout, Frames.Parse(stdout), log.Lines);
     }

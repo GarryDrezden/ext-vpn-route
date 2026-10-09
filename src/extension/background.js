@@ -4,6 +4,7 @@ import { DIAGNOSTICS_STORAGE_KEY, SOURCE_STORAGE_KEY } from "./runtime/config.js
 import { createProxyController } from "./runtime/proxy-controller.js";
 import { createRoutingCoordinator } from "./runtime/routing-coordinator.js";
 import { installRefreshAlarmHooks, wireRefreshAlarmListener } from "./runtime/refresh-alarm.js";
+import { wireNativePushManager } from "./runtime/native-push-manager.js";
 import {
   buildFixtureRulesPanelView,
   buildRulesPanelView,
@@ -33,13 +34,24 @@ function report(label) {
 
 installRefreshAlarmHooks(chrome, report);
 wireRefreshAlarmListener(chrome, coordinator, report);
+const nativePush = wireNativePushManager(chrome, coordinator, { mode: source.mode, report });
+
+function syncAndRefreshPush(reason) {
+  return coordinator.sync(reason).then((view) => {
+    if (nativePush) {
+      const caps = view.source && view.source.integration && view.source.integration.capabilities;
+      nativePush.updateCapabilities(caps);
+    }
+    return view;
+  });
+}
 
 chrome.runtime.onInstalled.addListener(() => {
-  coordinator.sync("installed").catch(report("sync on install"));
+  syncAndRefreshPush("installed").catch(report("sync on install"));
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  coordinator.sync("startup").catch(report("sync on startup"));
+  syncAndRefreshPush("startup").catch(report("sync on startup"));
 });
 
 if (chrome.proxy && chrome.proxy.onProxyError) {

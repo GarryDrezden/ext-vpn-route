@@ -31,6 +31,7 @@ internal static class NativeHostApp
         Stream output,
         IReadOnlyList<string> args,
         IServiceStateClient serviceClient,
+        IServiceEventsClient eventsClient,
         IHostLog log,
         TimeSpan? serviceTimeout = null,
         CancellationToken cancellationToken = default)
@@ -80,6 +81,11 @@ internal static class NativeHostApp
                     var result = await dispatcher.DispatchAsync(frame.Payload!, cancellationToken).ConfigureAwait(false);
                     log.Info($"request {result.Command}: {result.Outcome}");
                     await writer.WriteAsync(result.Response, cancellationToken).ConfigureAwait(false);
+                    if (result.EnterWatchMode)
+                    {
+                        await ServiceEventsForwarder.ForwardAsync(eventsClient, writer, input, log, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                     continue;
 
                 default:

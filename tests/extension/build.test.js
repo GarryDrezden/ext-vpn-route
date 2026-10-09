@@ -30,7 +30,8 @@ const EXPECTED_FILES = [
   "extension/popup/rule-editor-draft.js", "extension/popup/rule-form-helpers.js",
   "extension/popup/rules-labels.js", "extension/popup/rules-ui.js",
   "extension/runtime/chrome-adapter.js", "extension/runtime/config.js", "extension/runtime/proxy-controller.js",
-  "extension/runtime/refresh-alarm.js", "extension/runtime/routing-coordinator.js", "extension/runtime/rules-panel.js",
+  "extension/runtime/native-push-manager.js", "extension/runtime/refresh-alarm.js",
+  "extension/runtime/routing-coordinator.js", "extension/runtime/rules-panel.js",
   "extension/state/browser-routing-write-contract.js",
   "extension/state/integration-manifest.js", "extension/state/snapshot.js", "extension/state/vpn-routing-policy.js",
   "extension/state/smoke-state.js", "extension/state/source.js",
@@ -40,7 +41,10 @@ const EXPECTED_FILES = [
 
 const EXPECTED_NATIVE_FILES = EXPECTED_FILES
   .filter((file) => file !== "extension/state/smoke-state.js")
-  .concat(["extension/state/browser-routing-writer.js", "extension/state/native-state-provider.js"])
+  .concat([
+    "extension/state/browser-routing-writer.js",
+    "extension/state/native-state-provider.js"
+  ])
   .sort();
 
 let normal;
@@ -205,8 +209,8 @@ describe("native build", () => {
     ["fixture smuggled in", (dir) => cpSync(path.join(ROOT, "src/extension/state/smoke-state.js"),
       path.join(dir, "extension/state/smoke-state.js")), /must not contain extension\/state\/smoke-state\.js/],
     ["fixture import", (dir) => appendTo(dir, "extension/background.js", "\n// ./state/smoke-state.js\n"), /references the fixture/],
-    ["connectNative", (dir) => appendTo(dir, "extension/state/native-state-provider.js", "\nchrome.runtime.connectNative(\"x\");\n"),
-      /long-lived native port/],
+    ["connectNative elsewhere", (dir) => appendTo(dir, "extension/state/native-state-provider.js", "\nchrome.runtime.connectNative(\"x\");\n"),
+      /connectNative is allowed only/],
     ["native call elsewhere", (dir) => appendTo(dir, "extension/background.js", "\nchrome.runtime.sendNativeMessage(\"x\", {});\n"),
       /native messaging is allowed only/],
     ["extra permission", (dir) => editManifest(dir, (m) => { m.permissions.push("tabs"); }), /permissions must be exactly/],

@@ -39,10 +39,14 @@ export const NATIVE_HOST_NAME = "com.vpnroute.browser";
 const NATIVE_ONLY_FILES = Object.freeze([
   "state/source-native.js", "state/native-state-provider.js", "state/browser-routing-writer.js"
 ]);
+const FIXTURE_SKIP_FILES = Object.freeze(["runtime/native-push-manager.js"]);
 const FIXTURE_ONLY_FILES = Object.freeze(["state/smoke-state.js", "state/source.js"]);
 const NATIVE_MESSAGING_FILES = Object.freeze([
   "extension/state/native-state-provider.js",
   "extension/state/browser-routing-writer.js"
+]);
+const NATIVE_CONNECT_FILES = Object.freeze([
+  "extension/runtime/native-push-manager.js"
 ]);
 
 const SOURCES = Object.freeze({
@@ -50,7 +54,7 @@ const SOURCES = Object.freeze({
     {
       from: "src/extension",
       to: "extension",
-      skip: ["manifest.json", ...NATIVE_ONLY_FILES, "state/source-slice8-failclosed.js"]
+      skip: ["manifest.json", ...NATIVE_ONLY_FILES, ...FIXTURE_SKIP_FILES, "state/source-slice8-failclosed.js"]
     },
     { from: "src/pac", to: "pac" },
     { from: "src/domain/browser-routing", to: "domain/browser-routing" }
@@ -99,7 +103,6 @@ const FORBIDDEN_CODE = Object.freeze([
   [/\bchrome\.history\b/, "chrome.history"],
   [/\bchrome\.webRequest\b/, "chrome.webRequest"],
   [/\bchrome\.scripting\b/, "chrome.scripting"],
-  [/\bconnectNative\b/, "long-lived native port"],
   [/https?:\/\/[a-z0-9]/i, "remote URL"]
 ]);
 const NATIVE_MESSAGING_CODE = /\bsendNativeMessage\b|\bnativeMessaging\b/;
@@ -160,6 +163,13 @@ export async function buildExtension(options = {}) {
   if (fixture === "large") {
     writeFileSync(path.join(outDir, "extension/state/smoke-state.js"),
       renderFixtureModule("large", createLargeFixtureState()), "utf8");
+  }
+  if (mode === "fixture") {
+    writeFileSync(
+      path.join(outDir, "extension/runtime/native-push-manager.js"),
+      "// Fixture build: push sync is native-only.\nexport function wireNativePushManager() { return null; }\n",
+      "utf8"
+    );
   }
   if (fixture === SLICE8_FAILCLOSED_FIXTURE_NAME) {
     writeFileSync(path.join(outDir, "extension/state/smoke-state.js"), renderSlice8FailClosedSmokeModule(), "utf8");
@@ -274,6 +284,9 @@ export async function validateExtension(outDir, options = {}) {
     for (const [pattern, label] of FORBIDDEN_CODE) {
       if (label === "chrome.alarms polling" && ALARMS_ALLOWED_FILES.includes(file)) continue;
       if (pattern.test(source)) problems.push(file + ": forbidden " + label);
+    }
+    if (/\bconnectNative\b/.test(source) && !(mode === "native" && NATIVE_CONNECT_FILES.includes(file))) {
+      problems.push(file + ": connectNative is allowed only in " + NATIVE_CONNECT_FILES.join(" or ") + " of a native build");
     }
     if (NATIVE_MESSAGING_CODE.test(source) && !(mode === "native" && NATIVE_MESSAGING_FILES.includes(file))) {
       problems.push(file + ": native messaging is allowed only in " + NATIVE_MESSAGING_FILES.join(" or ") + " of a native build");

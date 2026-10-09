@@ -107,6 +107,7 @@ export const INTEGRATION_V1 = Object.freeze({
     "browserExplicitSocks",
     "browserRoutingState",
     "browserRoutingWrite",
+    "browserRoutingPush",
     "vpnEgressReadiness"
   ]),
   vpnEgress: Object.freeze({ status: "Unavailable", interfaceIndex: null, interfaceName: null }),

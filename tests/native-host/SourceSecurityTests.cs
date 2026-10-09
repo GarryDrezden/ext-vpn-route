@@ -30,7 +30,7 @@ public class SourceSecurityTests
         { "process launch", @"\bProcess\b|ProcessStartInfo|cmd\.exe|powershell|pwsh" },
         { "file system", @"\b(File|Directory|FileStream|FileInfo|DirectoryInfo|StreamReader|StreamWriter)\b\s*[.(]" },
         { "registry", @"\bRegistry\b|Microsoft\.Win32" },
-        { "environment state", @"Environment\.(GetEnvironmentVariables|GetCommandLineArgs|ExpandEnvironmentVariables|SetEnvironmentVariable)|Environment\.GetEnvironmentVariable\((?!ServiceIpcV1\.TestPipeVariable\))" },
+        { "environment state", @"Environment\.(GetEnvironmentVariables|GetCommandLineArgs|ExpandEnvironmentVariables|SetEnvironmentVariable)|Environment\.GetEnvironmentVariable\((?!ServiceIpcV1\.(TestPipeVariable|TestEventsPipeVariable)\))" },
         { "reflection loading", @"Assembly\.Load|Activator\.CreateInstance|Type\.GetType|DllImport|LibraryImport" },
         { "persistence", @"IsolatedStorage|MemoryCache|static\s+(?!readonly)[\w<>,\[\]? ]+\s+_?state" }
     };
@@ -51,12 +51,17 @@ public class SourceSecurityTests
     }
 
     [Fact]
-    public void OnlyThePipeClient_UsesPipes_WithIdentificationLevel()
+    public void OnlyThePipeClients_UsesPipes_WithIdentificationLevel()
     {
+        var pipeClients = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "BrowserRoutingPipeClient.cs",
+            "BrowserRoutingEventsPipeClient.cs"
+        };
         foreach (var path in HostSources())
         {
             var text = File.ReadAllText(path);
-            var isClient = Path.GetFileName(path) == "BrowserRoutingPipeClient.cs";
+            var isClient = pipeClients.Contains(Path.GetFileName(path));
             Assert.Equal(isClient, text.Contains("NamedPipeClientStream", StringComparison.Ordinal));
             Assert.Equal(isClient, text.Contains("System.IO.Pipes", StringComparison.Ordinal));
             if (isClient)
@@ -74,7 +79,7 @@ public class SourceSecurityTests
         Assert.Equal(["deleteRule", "getManifest", "getPage", "resetRules", "upsertRule"], serviceMethods);
 
         var commands = typeof(VpnRoute.NativeHost.Protocol.ProtocolV1.Commands).GetFields().Select(f => (string)f.GetValue(null)!).Order();
-        Assert.Equal(["deleteRule", "getStateManifest", "getStatePage", "ping", "resetRules", "upsertRule"], commands);
+        Assert.Equal(["deleteRule", "getStateManifest", "getStatePage", "ping", "resetRules", "upsertRule", "watchEvents"], commands);
 
         Assert.Equal("SelectiveVpnRouter.BrowserRouting", VpnRoute.NativeHost.Service.ServiceIpcV1.PipeName);
         var client = File.ReadAllText(Path.Combine(HostDirectory, "Service", "BrowserRoutingPipeClient.cs"));
@@ -88,12 +93,15 @@ public class SourceSecurityTests
         {
             var text = File.ReadAllText(path);
             var isProgram = Path.GetFileName(path) == "Program.cs";
-            Assert.Equal(isProgram, text.Contains("GetEnvironmentVariable", StringComparison.Ordinal));
+            var envMatches = Regex.Matches(text, "GetEnvironmentVariable").Count;
+            Assert.Equal(isProgram, envMatches > 0);
             if (isProgram)
             {
-                Assert.Single(Regex.Matches(text, "GetEnvironmentVariable"));
+                Assert.Equal(2, envMatches);
                 Assert.Contains("ServiceIpcV1.ResolvePipeName(testPipe)", text, StringComparison.Ordinal);
+                Assert.Contains("ServiceIpcV1.ResolveEventsPipeName(testEventsPipe)", text, StringComparison.Ordinal);
                 Assert.Contains("new BrowserRoutingPipeClient(pipeName)", text, StringComparison.Ordinal);
+                Assert.Contains("new BrowserRoutingEventsPipeClient(eventsPipeName)", text, StringComparison.Ordinal);
             }
         }
         Assert.Equal("VPN_ROUTE_TEST_SERVICE_PIPE", VpnRoute.NativeHost.Service.ServiceIpcV1.TestPipeVariable);
