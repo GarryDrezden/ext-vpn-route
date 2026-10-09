@@ -166,8 +166,10 @@ test("native build service worker fetches state over native messaging and keeps 
 
     fireStartup(runtime);
     status = await send(mock.chrome, { command: "status" });
-    assert.deepEqual(native.calls.map((call) => call.message.command),
-      ["ping", "getStateManifest", "getStatePage", "getStateManifest", "ping", "getStateManifest"]);
+    const commands = native.calls.map((call) => call.message.command);
+    assert.deepEqual(commands.slice(0, 3), ["ping", "getStateManifest", "getStatePage"]);
+    assert.ok(commands.filter((c) => c === "getStateManifest").length >= 2,
+      "popup status loads authoritative rules via an additional manifest fetch");
     assert.equal(mock.proxy.calls.set.length, 1);
 
     host.handler = nativeHostReturning(routingState(43), UNAVAILABLE);

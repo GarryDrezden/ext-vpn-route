@@ -177,11 +177,11 @@ describe("refresh alarm registration", () => {
       assert.ok(afterInstall > 0);
 
       mock.alarms.onAlarm.listeners[0]({ name: "otherAlarm" });
-      await send(mock.chrome, { command: "status" });
+      await waitTicks();
       assert.equal(native.calls.length, afterInstall);
 
       mock.alarms.onAlarm.listeners[0]({ name: REFRESH_ALARM_NAME });
-      await send(mock.chrome, { command: "status" });
+      await waitTicks();
       assert.ok(native.calls.length > afterInstall);
     } finally {
       delete globalThis.chrome;

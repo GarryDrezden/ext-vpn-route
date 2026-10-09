@@ -115,6 +115,8 @@ Write-ответы и write-ошибки host **не** ретраит и **не*
 
 Host — тупой bridge. Каждая команда отображается ровно на один фиксированный метод Service. Generic relay `{command, args}` нет, snapshot host не собирает и не кэширует, revision/generation не создаёт.
 
+**Slice 9C (extension popup):** список правил и формы читают/пишут только через Service snapshot + `browser-routing-writer` (см. `extension/popup/rules-ui.js`, `extension/runtime/rules-panel.js`). Незавершённый черновик формы — только `chrome.storage.session` (`rule-editor-draft.js`), не Service. Конфликты revision и неоднозначный transport не ретраятся; после успешной мутации — обычный `coordinator.sync("post-write")`.
+
 | Native Messaging | Service IPC |
 |---|---|
 | `ping` | — (к Service не обращается) |

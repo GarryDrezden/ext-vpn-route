@@ -1,89 +1,178 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8">
   <title>VPN Route</title>
   <link rel="stylesheet" href="popup.css">
 </head>
-<body>
-  <header>
+<body class="view-list">
+  <header class="app-header">
     <h1>VPN Route</h1>
-    <p class="subtitle">Browser Routing — Integration API v1 consumer</p>
+    <p class="subtitle">Browser Routing</p>
   </header>
 
-  <section>
-    <dl>
-      <dt>Extension ID</dt><dd id="extension-id">—</dd>
-      <dt>Proxy API</dt><dd id="proxy-api">—</dd>
-      <dt>Level of control</dt><dd id="level-of-control">—</dd>
-      <dt>State source</dt><dd id="state-source">—</dd>
-      <dt>Routing protection</dt><dd id="protection">—</dd>
-    </dl>
-  </section>
+  <main id="rules-root" class="rules-root">
+    <p id="rules-status-message" class="rules-message" hidden></p>
 
-  <section id="native-section" hidden>
-    <h2>Native state transport</h2>
-    <dl>
-      <dt>Native host</dt><dd id="native-host">—</dd>
-      <dt>Transport</dt><dd id="native-transport">—</dd>
-      <dt>Protocol</dt><dd id="native-protocol">—</dd>
-      <dt>Service</dt><dd id="native-service">—</dd>
-      <dt>Browser state</dt><dd id="native-state">—</dd>
-      <dt>Browser proxy</dt><dd id="native-browser-proxy">—</dd>
-      <dt>Integration API</dt><dd id="native-integration-api">—</dd>
-      <dt>VPN egress</dt><dd id="native-vpn-egress">—</dd>
-      <dt>Last state fetch</dt><dd id="native-last-fetch">—</dd>
-      <dt>Fetched snapshot</dt><dd id="native-fetched-revision">—</dd>
-      <dt>State generation</dt><dd id="native-generation">—</dd>
-      <dt>Applied snapshot</dt><dd id="native-applied-identity">—</dd>
-      <dt>Lineage change</dt><dd id="native-lineage-change">—</dd>
-      <dt>Pages</dt><dd id="native-pages">—</dd>
-      <dt>Last decision</dt><dd id="native-decision">—</dd>
-      <dt>Last transport error</dt><dd id="native-transport-error">—</dd>
-    </dl>
-  </section>
+    <div id="rules-list-view" class="rules-list-view">
+      <div class="rules-section-head">
+        <h2 class="rules-title">Правила</h2>
+        <button id="rules-add" type="button" class="btn-icon" title="Добавить правило" aria-label="Добавить правило" hidden>+</button>
+      </div>
+      <p id="rules-default-route" class="rules-default-compact">—</p>
+      <p id="rules-capability-hint" class="rules-hint" hidden></p>
+      <p id="rules-unavailable" class="rules-hint" hidden>Не удалось загрузить актуальные правила.</p>
 
-  <section>
-    <h2>State</h2>
-    <dl>
-      <dt>Fixture</dt><dd id="fixture">—</dd>
-      <dt>Schema version</dt><dd id="state-schema">—</dd>
-      <dt>Revision</dt><dd id="state-revision">—</dd>
-      <dt>Default route</dt><dd id="state-default">—</dd>
-      <dt>Enabled rules</dt><dd id="state-rules">—</dd>
-    </dl>
-  </section>
+      <div id="rules-empty" class="rules-empty" hidden>
+        <p class="rules-empty-title">Правил пока нет</p>
+        <p class="rules-empty-help">Добавьте домен и выберите маршрут.</p>
+        <button id="rules-add-empty" type="button" class="btn btn-primary">+ Добавить правило</button>
+      </div>
 
-  <section>
-    <h2>PAC</h2>
-    <dl>
-      <dt>Compile status</dt><dd id="compile-status">—</dd>
-      <dt>Compiled revision</dt><dd id="compile-revision">—</dd>
-      <dt>Byte size</dt><dd id="compile-size">—</dd>
-      <dt>Endpoint</dt><dd id="compile-endpoint">—</dd>
-    </dl>
-  </section>
+      <ul id="rules-list" class="rules-list"></ul>
+    </div>
 
-  <section>
-    <h2>Applied</h2>
-    <dl>
-      <dt>Status</dt><dd id="status">—</dd>
-      <dt>Applied revision</dt><dd id="applied-revision">—</dd>
-      <dt>Active PAC</dt><dd id="active-pac">—</dd>
-      <dt>Mode</dt><dd id="active-mode">—</dd>
-      <dt>Mandatory</dt><dd id="active-mandatory">—</dd>
-      <dt>Read-back</dt><dd id="active-verification">—</dd>
-      <dt>Last operation</dt><dd id="last-operation">—</dd>
-      <dt>Last error</dt><dd id="last-error">—</dd>
-      <dt>Last proxy error</dt><dd id="last-proxy-error">—</dd>
-    </dl>
-  </section>
+    <div id="rules-editor-view" class="rules-editor-view" hidden>
+      <div class="editor-top">
+        <button id="rule-back" type="button" class="btn-back" aria-label="Назад к списку">←</button>
+        <h2 id="rule-editor-title" class="editor-title">Новое правило</h2>
+      </div>
+      <p id="rule-form-error" class="rules-message bad" role="alert"></p>
 
-  <div class="buttons">
-    <button id="reapply" type="button">Reapply PAC</button>
-    <button id="clear" type="button">Clear extension proxy</button>
-    <button id="refresh" type="button">Refresh status</button>
-  </div>
+      <div class="field">
+        <label class="field-label" for="rule-name">Название</label>
+        <input id="rule-name" class="field-input" type="text" autocomplete="off">
+      </div>
+      <div class="field">
+        <label class="field-label" for="rule-host">Домен</label>
+        <input id="rule-host" class="field-input" type="text" autocomplete="off" placeholder="example.com">
+      </div>
+      <div class="field">
+        <label class="field-label" for="rule-match">Тип совпадения</label>
+        <select id="rule-match" class="field-input field-select">
+          <option value="DomainAndSubdomains">Домен и поддомены</option>
+          <option value="ExactHost">Только этот домен</option>
+        </select>
+      </div>
+      <div class="field">
+        <span class="field-label" id="rule-route-label">Маршрут</span>
+        <div id="rule-route-group" class="segmented" role="radiogroup" aria-labelledby="rule-route-label">
+          <label class="segmented-item"><input type="radio" name="rule-route" value="VPN" checked> Через VPN</label>
+          <label class="segmented-item"><input type="radio" name="rule-route" value="Direct"> Напрямую</label>
+        </div>
+      </div>
+      <div class="field field-row">
+        <label class="switch" for="rule-enabled">
+          <input id="rule-enabled" type="checkbox" class="switch-input" checked>
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="switch-label">Правило включено</span>
+        </label>
+      </div>
+      <details class="field-notes">
+        <summary>Заметки</summary>
+        <textarea id="rule-notes" class="field-input field-textarea" rows="2" autocomplete="off"></textarea>
+      </details>
+
+      <div class="editor-actions">
+        <button id="rule-save" type="button" class="btn btn-primary">Сохранить</button>
+        <button id="rule-cancel" type="button" class="btn btn-ghost">Отмена</button>
+      </div>
+      <div id="rule-delete-zone" class="editor-delete-zone" hidden>
+        <hr class="editor-divider" aria-hidden="true">
+        <button id="rule-delete-edit" type="button" class="btn btn-danger-text">Удалить правило</button>
+      </div>
+    </div>
+
+    <div id="rules-confirm-bar" class="rules-confirm-bar" hidden role="region" aria-live="polite">
+      <p id="rules-confirm-text" class="rules-confirm-text"></p>
+      <div class="rules-confirm-actions">
+        <button id="rules-confirm-ok" type="button" class="btn btn-danger">Подтвердить</button>
+        <button id="rules-confirm-cancel" type="button" class="btn btn-ghost">Отмена</button>
+      </div>
+    </div>
+  </main>
+
+  <details id="diagnostics-details" class="diagnostics">
+    <summary>Диагностика</summary>
+
+    <section>
+      <dl>
+        <dt>Extension ID</dt><dd id="extension-id">—</dd>
+        <dt>Proxy API</dt><dd id="proxy-api">—</dd>
+        <dt>Level of control</dt><dd id="level-of-control">—</dd>
+        <dt>State source</dt><dd id="state-source">—</dd>
+        <dt>Routing protection</dt><dd id="protection">—</dd>
+      </dl>
+    </section>
+
+    <section id="native-section" hidden>
+      <h2>Native state transport</h2>
+      <dl>
+        <dt>Native host</dt><dd id="native-host">—</dd>
+        <dt>Transport</dt><dd id="native-transport">—</dd>
+        <dt>Protocol</dt><dd id="native-protocol">—</dd>
+        <dt>Service</dt><dd id="native-service">—</dd>
+        <dt>Browser state</dt><dd id="native-state">—</dd>
+        <dt>Browser proxy</dt><dd id="native-browser-proxy">—</dd>
+        <dt>Integration API</dt><dd id="native-integration-api">—</dd>
+        <dt>VPN egress</dt><dd id="native-vpn-egress">—</dd>
+        <dt>Last state fetch</dt><dd id="native-last-fetch">—</dd>
+        <dt>Fetched snapshot</dt><dd id="native-fetched-revision">—</dd>
+        <dt>State generation</dt><dd id="native-generation">—</dd>
+        <dt>Applied snapshot</dt><dd id="native-applied-identity">—</dd>
+        <dt>Lineage change</dt><dd id="native-lineage-change">—</dd>
+        <dt>Pages</dt><dd id="native-pages">—</dd>
+        <dt>Last decision</dt><dd id="native-decision">—</dd>
+        <dt>Last transport error</dt><dd id="native-transport-error">—</dd>
+      </dl>
+    </section>
+
+    <section>
+      <h2>State</h2>
+      <dl>
+        <dt>Fixture</dt><dd id="fixture">—</dd>
+        <dt>Schema version</dt><dd id="state-schema">—</dd>
+        <dt>Revision</dt><dd id="state-revision">—</dd>
+        <dt>Default route</dt><dd id="state-default">—</dd>
+        <dt>Enabled rules</dt><dd id="state-rules">—</dd>
+      </dl>
+    </section>
+
+    <section>
+      <h2>PAC</h2>
+      <dl>
+        <dt>Compile status</dt><dd id="compile-status">—</dd>
+        <dt>Compiled revision</dt><dd id="compile-revision">—</dd>
+        <dt>Byte size</dt><dd id="compile-size">—</dd>
+        <dt>Endpoint</dt><dd id="compile-endpoint">—</dd>
+      </dl>
+    </section>
+
+    <section>
+      <h2>Applied</h2>
+      <dl>
+        <dt>Status</dt><dd id="status">—</dd>
+        <dt>Applied revision</dt><dd id="applied-revision">—</dd>
+        <dt>Active PAC</dt><dd id="active-pac">—</dd>
+        <dt>Mode</dt><dd id="active-mode">—</dd>
+        <dt>Mandatory</dt><dd id="active-mandatory">—</dd>
+        <dt>Read-back</dt><dd id="active-verification">—</dd>
+        <dt>Last operation</dt><dd id="last-operation">—</dd>
+        <dt>Last error</dt><dd id="last-error">—</dd>
+        <dt>Last proxy error</dt><dd id="last-proxy-error">—</dd>
+      </dl>
+    </section>
+
+    <div class="diagnostics-advanced">
+      <button id="rules-reset" type="button" class="btn btn-danger-text">Сбросить все правила</button>
+    </div>
+
+    <div class="diagnostics-actions buttons">
+      <button id="reapply" type="button" class="btn btn-secondary">Обновить и применить</button>
+      <button id="clear" type="button" class="btn btn-secondary">Сбросить proxy расширения</button>
+      <button id="refresh" type="button" class="btn btn-secondary">Обновить статус</button>
+    </div>
+  </details>
 
   <script type="module" src="popup.js"></script>
 </body>

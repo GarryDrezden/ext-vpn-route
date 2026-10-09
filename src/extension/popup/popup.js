@@ -1,3 +1,5 @@
+import { createRulesUi } from "./rules-ui.js";
+
 const byId = (id) => document.getElementById(id);
 const buttons = ["reapply", "clear", "refresh"].map(byId);
 
@@ -16,7 +18,7 @@ function toneFor(status) {
 
 function renderNative(source) {
   byId("native-section").hidden = false;
-  byId("reapply").textContent = "Refresh state & apply";
+  byId("reapply").textContent = "Обновить и применить";
   show("native-host", source.hostName);
   show("native-transport", source.transport, toneFor(source.transport));
   show("native-protocol", source.protocolVersion);
@@ -110,19 +112,60 @@ function render(response) {
     pe ? "bad" : "");
 }
 
-function send(command) {
+function send(command, extra) {
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ command }, (response) => {
+    chrome.runtime.sendMessage({ command, ...extra }, (response) => {
       const error = chrome.runtime.lastError;
       resolve(error ? { ok: false, error: error.message } : response);
     });
   });
 }
 
+const rulesUi = createRulesUi({
+  elements: {
+    "rules-root": byId("rules-root"),
+    "rules-list": byId("rules-list"),
+    "rules-empty": byId("rules-empty"),
+    "rules-list-view": byId("rules-list-view"),
+    "rules-editor-view": byId("rules-editor-view"),
+    "rules-add": byId("rules-add"),
+    "rules-add-empty": byId("rules-add-empty"),
+    "rules-reset": byId("rules-reset"),
+    "rules-capability-hint": byId("rules-capability-hint"),
+    "rules-unavailable": byId("rules-unavailable"),
+    "rules-status-message": byId("rules-status-message"),
+    "rules-default-route": byId("rules-default-route"),
+    "rule-editor-title": byId("rule-editor-title"),
+    "rule-back": byId("rule-back"),
+    "rule-name": byId("rule-name"),
+    "rule-host": byId("rule-host"),
+    "rule-match": byId("rule-match"),
+    "rule-route-group": byId("rule-route-group"),
+    "rule-enabled": byId("rule-enabled"),
+    "rule-notes": byId("rule-notes"),
+    "rule-form-error": byId("rule-form-error"),
+    "rule-save": byId("rule-save"),
+    "rule-cancel": byId("rule-cancel"),
+    "rule-delete-zone": byId("rule-delete-zone"),
+    "rule-delete-edit": byId("rule-delete-edit"),
+    "rules-confirm-bar": byId("rules-confirm-bar"),
+    "rules-confirm-text": byId("rules-confirm-text"),
+    "rules-confirm-ok": byId("rules-confirm-ok"),
+    "rules-confirm-cancel": byId("rules-confirm-cancel")
+  },
+  send,
+  onStatus: (response) => render(response)
+});
+
 async function run(command) {
   buttons.forEach((button) => { button.disabled = true; });
   try {
-    render(await send(command));
+    const response = await send(command);
+    render(response);
+    if (response.rulesPanel) {
+      rulesUi.renderPanel(response.rulesPanel);
+      await rulesUi.tryRestoreSessionDraft();
+    }
   } finally {
     buttons.forEach((button) => { button.disabled = false; });
   }

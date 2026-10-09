@@ -1,24 +1,17 @@
 import { DEFAULT_NATIVE_TIMEOUT_MS, NATIVE_PROTOCOL_VERSION } from "./native-state-provider.js";
+import {
+  BROWSER_ROUTING_WRITE_CAPABILITY,
+  ServiceWriteErrorCode,
+  WriterErrorCode,
+  syncAfterBrowserRoutingWrite
+} from "./browser-routing-write-contract.js";
 
-export const BROWSER_ROUTING_WRITE_CAPABILITY = "browserRoutingWrite";
-
-/** Service-side write error codes forwarded verbatim by the native host. */
-export const ServiceWriteErrorCode = Object.freeze({
-  InvalidRequest: "invalid_request",
-  RevisionConflict: "revision_conflict",
-  ValidationFailed: "validation_failed",
-  NotFound: "not_found",
-  PersistenceFailed: "persistence_failed",
-  BrowserStateUnavailable: "browser_state_unavailable"
-});
-
-export const WriterErrorCode = Object.freeze({
-  UnsupportedCapability: "unsupported_capability",
-  TransportUnavailable: "transport_unavailable",
-  Timeout: "timeout",
-  MalformedResponse: "malformed_response",
-  HostError: "host_error"
-});
+export {
+  BROWSER_ROUTING_WRITE_CAPABILITY,
+  ServiceWriteErrorCode,
+  WriterErrorCode,
+  syncAfterBrowserRoutingWrite
+};
 
 const SERVICE_WRITE_ERRORS = new Set(Object.values(ServiceWriteErrorCode));
 const SERVICE_DOWN_CODES = new Set(["service_unavailable", "service_timeout", "service_error", "service_untrusted"]);
@@ -88,14 +81,6 @@ function parseHostFailure(error) {
 
 /**
  * Typed Browser Routing write client (Native Host bridge only; Service remains authoritative).
- *
- * @param {{
- *   runtime: { sendNativeMessage(host: string, message: object, callback: (response: unknown) => void): void, lastError?: { message?: string } },
- *   hostName: string,
- *   timeoutMs?: number,
- *   newRequestId?: () => string,
- *   now?: () => string
- * }} deps
  */
 export function createBrowserRoutingWriter(deps) {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_NATIVE_TIMEOUT_MS;
@@ -204,11 +189,4 @@ export function createBrowserRoutingWriter(deps) {
       return invoke({ command: "resetRules", expectedRevision }, integration);
     }
   });
-}
-
-/** After a successful write, run a normal coordinator sync so PAC/state follow Service truth. */
-export async function syncAfterBrowserRoutingWrite(coordinator, writeOutcome, reason = "post-write") {
-  if (!writeOutcome.ok) return { write: writeOutcome, sync: null };
-  const sync = await coordinator.sync(reason);
-  return Object.freeze({ write: writeOutcome, sync });
 }

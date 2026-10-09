@@ -86,9 +86,13 @@ VPN Route Service
 - Phase 4, production native state transport (extension → `com.vpnroute.browser` → интерфейс клиента Service): **PASS, автоматические тесты**. `docs/phase4-native-state-transport.md`.
 - Phase 5, интеграция с VPN Route Service (host → `\\.\pipe\SelectiveVpnRouter.BrowserRouting` → authoritative state, постранично, generation + revision): **FULL PASS** — автоматические тесты, E2E 10k rules, Yandex Browser с production host и реальной службой. `docs/phase5-service-integration.md`, `docs/phase5-acceptance.md`, протоколы `docs/native-messaging-protocol-v1.md` и `docs/service-ipc-browser-routing-v1.md`.
 - **Slice 8 (Browser Integration Port v1) — ACCEPTED:** Integration API v1, explicit loopback SOCKS5 browser proxy, VPN-bound session DNS (OpenVPN PUSH), fail-closed PAC (`SOCKS5 127.0.0.1:0` без implicit DIRECT), heartbeat/stale observability, dynamic endpoint recovery через MV3 `chrome.alarms` (1 min), real Yandex acceptance. Baseline: **497** Node tests, **210** Native Host tests. Dev-only fail-closed browser fixture: `npm run build:slice8-failclosed-fixture` → `artifacts/slice8-failclosed-fixture`.
-- **Slice 9A — DONE** (vpn-gateway `42246df`): Service write API `upsertRule` / `deleteRule` / `resetRules`, capability `browserRoutingWrite` (not deployed).
-- **Slice 9B — DONE:** Native Host write bridge + extension `browser-routing-writer.js` (no rule UI).
-- **Slice 9C — NEXT / local:** Browser Routing rules UI in popup (writer only; no new Service methods).
+- **Slice 9 (Browser Routing writes + Rules UI) — ACCEPTED / COMPLETE**
+  - **9A — DONE** (vpn-gateway `42246df`, deployed): Service write API `upsertRule` / `deleteRule` / `resetRules`, capability `browserRoutingWrite`.
+  - **9B — DONE** (`220d5a6`, deployed): Native Host write bridge + extension writer (`browser-routing-writer.js`, `browser-routing-write-contract.js`).
+  - **9C — DONE** (this repo, extension reloaded): popup Rules UI (list ↔ editor, diagnostics secondary), `chrome.storage.session` draft for in-progress forms. No new Service/Native Host methods.
+  - **Live acceptance (manual):** create, edit, enable/disable toggle, delete with confirm, post-write authoritative sync + PAC (fail-closed when VPN disconnected), session draft survives popup close/reopen.
+  - **Automated only (not forced live):** `resetRules`, `revision_conflict`, ambiguous transport failure, validation_failed, capability read-only/absent, unavailable snapshot, mutation serialization, `expectedRevision` propagation.
+  - **Test baseline:** **544** Node tests, **219** Native Host tests.
 
 Временный код feasibility-фазы лежит в `spike/` и в продукт не переносится.
 
