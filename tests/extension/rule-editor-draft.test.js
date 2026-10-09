@@ -199,6 +199,16 @@ function getRoute(radios) {
   return radios.find((r) => r.checked).value;
 }
 
+/** saveRule() re-persists the draft (new updatedAt); compare semantic content only. */
+function assertDraftKept(before, after) {
+  assert.ok(after, "draft should still exist");
+  assert.equal(after.version, before.version);
+  assert.equal(after.mode, before.mode);
+  assert.equal(after.ruleId, before.ruleId);
+  assert.deepEqual(after.fields, before.fields);
+  assert.ok(typeof after.updatedAt === "number" && after.updatedAt >= before.updatedAt);
+}
+
 test("successful save clears session draft", async () => {
   const store = createMemoryDraftStore();
   const panel = { ...emptyPanel, rules: [] };
@@ -246,7 +256,7 @@ test("validation_failed keeps draft", async () => {
   const before = await store.load();
   elements["rule-save"].listeners.click();
   await tick();
-  assert.deepEqual(await store.load(), before);
+  assertDraftKept(before, await store.load());
   assert.equal(ui.isEditorOpen(), true);
 });
 
@@ -265,7 +275,7 @@ test("revision_conflict keeps draft", async () => {
   const before = await store.load();
   elements["rule-save"].listeners.click();
   await tick();
-  assert.deepEqual(await store.load(), before);
+  assertDraftKept(before, await store.load());
   assert.equal(ui.isEditorOpen(), true);
 });
 
@@ -284,7 +294,7 @@ test("ambiguous transport failure keeps draft", async () => {
   const before = await store.load();
   elements["rule-save"].listeners.click();
   await tick();
-  assert.deepEqual(await store.load(), before);
+  assertDraftKept(before, await store.load());
   assert.equal(ui.isEditorOpen(), true);
 });
 

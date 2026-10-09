@@ -92,9 +92,21 @@ VPN Route Service
   - **9C — DONE** (this repo, extension reloaded): popup Rules UI (list ↔ editor, diagnostics secondary), `chrome.storage.session` draft for in-progress forms. No new Service/Native Host methods.
   - **Live acceptance (manual):** create, edit, enable/disable toggle, delete with confirm, post-write authoritative sync + PAC (fail-closed when VPN disconnected), session draft survives popup close/reopen.
   - **Automated only (not forced live):** `resetRules`, `revision_conflict`, ambiguous transport failure, validation_failed, capability read-only/absent, unavailable snapshot, mutation serialization, `expectedRevision` propagation.
-  - **Test baseline:** **544** Node tests, **219** Native Host tests.
+  - **Test baseline:** **552** Node tests, **219** Native Host tests.
+- **Slice 10A — developer install/update orchestrator — ACCEPTED / COMPLETE** (vpn-gateway): `scripts\install-vpn-route.ps1` builds/tests extension stack, runs `update-desktop.ps1` (**823** tests), registers `com.vpnroute.browser`, read-only integration verify (`scripts/verify-browser-integration-readonly.js`). Live acceptance: `-CheckOnly`, pre-mutation failure safety, full elevated install, manual extension reload. Windows PowerShell 5.1 parser gate: `vpn-gateway\scripts\validate-install-vpn-route-parse.ps1`. External OpenVPN is never touched.
 
 Временный код feasibility-фазы лежит в `spike/` и в продукт не переносится.
+
+**Canonical developer install/update** (elevated PowerShell from vpn-gateway repo):
+
+```powershell
+cd ..\vpn-gateway
+powershell -ExecutionPolicy Bypass -File scripts\install-vpn-route.ps1
+```
+
+Read-only audit (no builds, no registry/Service changes, no BrowserRouting writes): `-CheckOnly`. Close VPN Route GUI before a full update. Extension repo override: `-ExtensionRepoPath` or `EXT_VPN_ROUTE_ROOT`.
+
+After a successful run, reload the extension at `browser://extensions` or **Load unpacked** from `dist\extension` (production ID `lfaekfalhkgmbfdjjlfcalanhijeaien`).
 
 ```text
 npm test                          # Node: domain, PAC, extension, integration
