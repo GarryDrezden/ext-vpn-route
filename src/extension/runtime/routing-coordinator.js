@@ -9,13 +9,17 @@
  * - lineage is {stateGeneration, revision}: within one generation a lower revision is
  *   rejected (stale_snapshot); a different generation starts a new lineage and retires the
  *   previous one, so a replayed snapshot of a retired generation is rejected at any revision;
- * - a snapshot is applied only when the Service reports the browser proxy as Ready;
- *   otherwise the current PAC is kept as is (browser_proxy_unavailable);
+ * - when the Service reports browser proxy Ready, PAC uses that loopback endpoint;
+ * - when proxy is not Ready but state requires VPN routing and there is no last-known-good
+ *   SOCKS endpoint, a blocking fail-closed PAC is applied (invalid SOCKS directive, no TCP target);
+ * - otherwise the current PAC is kept as is (browser_proxy_unavailable);
  * - the proxy is cleared only by an explicit clear(), which keeps the lineage.
  *
  * Fixture mode keeps the Phase 3 behaviour: every sync recompiles the build-time fixture.
  */
 
+import { samePacApplyFingerprint, pacApplyFingerprint } from "../state/integration-manifest.js";
+import { stateRequiresVpnFailClosedRouting } from "../state/vpn-routing-policy.js";
 import { ActivePac, Status } from "./proxy-controller.js";
 
 export const StateSource = Object.freeze({ Fixture: "Fixture", Native: "Native" });
@@ -32,6 +36,9 @@ export const Decision = Object.freeze({
   StaleSnapshot: "stale_snapshot",
   RetiredGeneration: "retired_generation",
   BrowserProxyUnavailable: "browser_proxy_unavailable",
+  FailClosedBlockingApplied: "fail_closed_blocking_applied",
+  IntegrationApiIncompatible: "integration_api_incompatible",
+  ManifestInvalid: "manifest_invalid",
   FetchFailed: "fetch_failed",
   ApplyFailed: "apply_failed",
   Cleared: "cleared",
@@ -40,7 +47,7 @@ export const Decision = Object.freeze({
 
 export const MAX_RETIRED_GENERATIONS = 16;
 
-const SOURCE_DIAGNOSTICS_VERSION = 2;
+const SOURCE_DIAGNOSTICS_VERSION = 3;
 const TRANSPORT_ERROR_CODES = new Set([
   "host_not_found", "access_forbidden", "host_exited", "transport_error", "timeout",
   "malformed_response", "unsupported_protocol", "request_id_mismatch", "provider_exception"
@@ -83,8 +90,10 @@ export function computeProtection(mode, diagnostics, source) {
   if (active.pac === ActivePac.Previous || diagnostics.status !== Status.Applied) return Protection.LastKnownGood;
   if (mode === StateSource.Fixture) return Protection.Current;
   const fetchedOk = Boolean(source && source.lastFetch && source.lastFetch.result === "OK");
+  const appliedFingerprint = source && source.lineage && source.lineage.appliedPacFingerprint;
+  const fetchedFingerprint = source && source.fetchedPacFingerprint;
   const current = fetchedOk && source.browserProxy === "READY" &&
-    sameIdentity(source.fetchedIdentity, source.lineage && source.lineage.appliedIdentity) &&
+    samePacApplyFingerprint(appliedFingerprint, fetchedFingerprint) &&
     source.fetchedIdentity.revision === active.revision;
   return current ? Protection.Current : Protection.LastKnownGood;
 }
@@ -92,6 +101,19 @@ export function computeProtection(mode, diagnostics, source) {
 function sameEndpoint(lastApplied, endpoint) {
   const applied = lastApplied && lastApplied.metadata && lastApplied.metadata.proxyEndpoint;
   return Boolean(applied) && applied.host === endpoint.host && applied.port === endpoint.port;
+}
+
+function lastKnownGoodProxyEndpoint(diagnostics) {
+  const metadata = diagnostics && diagnostics.lastApplied && diagnostics.lastApplied.metadata;
+  if (!metadata || metadata.failClosedBlocking) return null;
+  const endpoint = metadata.proxyEndpoint;
+  if (!endpoint) return null;
+  return { host: endpoint.host, port: endpoint.port };
+}
+
+function lastAppliedIsFailClosedBlocking(diagnostics) {
+  return Boolean(diagnostics && diagnostics.lastApplied && diagnostics.lastApplied.metadata &&
+    diagnostics.lastApplied.metadata.failClosedBlocking);
 }
 
 function short(generation) {
@@ -231,10 +253,17 @@ export function createRoutingCoordinator(deps) {
         identity: fetched.identity,
         stats: fetched.stats
       };
+      source.integration = fetched.integration || null;
+      source.fetchedPacFingerprint = null;
       if (TRANSPORT_ERROR_CODES.has(fetched.error.code)) {
         source.lastTransportError = { code: fetched.error.code, message: fetched.error.message, at: fetched.at };
       }
-      decide(source, Decision.FetchFailed, fetched.error.hostErrorCode || fetched.error.code);
+      const decision = fetched.error.code === "integration_api_incompatible"
+        ? Decision.IntegrationApiIncompatible
+        : fetched.error.code === "manifest_invalid" || fetched.error.code === "invalid_manifest"
+          ? Decision.ManifestInvalid
+          : Decision.FetchFailed;
+      decide(source, decision, fetched.error.hostErrorCode || fetched.error.message || fetched.error.code);
       return finish(source, await controller.refresh());
     }
 
@@ -250,6 +279,8 @@ export function createRoutingCoordinator(deps) {
       stats: fetched.stats
     };
     source.fetchedIdentity = identity;
+    source.integration = fetched.integration || null;
+    source.fetchedPacFingerprint = pacApplyFingerprint(identity, snapshot.browserProxy);
 
     const admission = admit(source, identity);
     if (admission.rejected) {
@@ -258,25 +289,62 @@ export function createRoutingCoordinator(deps) {
     }
     const lineageNote = admission.newLineage ? " (new lineage)" : "";
 
-    if (snapshot.browserProxy.status !== "Ready") {
-      decide(source, Decision.BrowserProxyUnavailable, "state " + describe(identity) + " not applied" + lineageNote);
-      return finish(source, await controller.refresh());
-    }
-    const endpoint = snapshot.browserProxy.endpoint;
+    const currentDiagnostics = await controller.refresh();
+    const proxyReady = snapshot.browserProxy.status === "Ready";
+    const endpoint = proxyReady ? snapshot.browserProxy.endpoint : null;
+    const needsFailClosed = stateRequiresVpnFailClosedRouting(snapshot.state);
+    const lkgEndpoint = lastKnownGoodProxyEndpoint(currentDiagnostics);
 
-    if (sameIdentity(source.lineage.appliedIdentity, identity)) {
-      const current = await controller.refresh();
-      const stillActive = current.status === Status.Applied && current.active.pac === ActivePac.Current &&
-        current.active.revision === identity.revision && sameEndpoint(current.lastApplied, endpoint);
+    if (!proxyReady) {
+      source.fetchedPacFingerprint = needsFailClosed && !lkgEndpoint
+        ? pacApplyFingerprint(identity, snapshot.browserProxy, { blocking: true })
+        : pacApplyFingerprint(identity, snapshot.browserProxy);
+
+      if (needsFailClosed && !lkgEndpoint) {
+        const appliedFingerprint = source.lineage.appliedPacFingerprint;
+        if (samePacApplyFingerprint(appliedFingerprint, source.fetchedPacFingerprint)) {
+          if (currentDiagnostics.status === Status.Applied && currentDiagnostics.active.pac === ActivePac.Current &&
+            currentDiagnostics.active.revision === identity.revision &&
+            lastAppliedIsFailClosedBlocking(currentDiagnostics)) {
+            decide(source, Decision.Unchanged, describe(identity) + " blocking");
+            return finish(source, currentDiagnostics);
+          }
+        }
+        const diagnostics = await controller.apply(reason, {
+          state: snapshot.state,
+          failClosedBlocking: true
+        });
+        if (diagnostics.status === Status.Applied && diagnostics.lastApplied &&
+          diagnostics.lastApplied.revision === identity.revision) {
+          source.lineage.appliedIdentity = { stateGeneration: identity.stateGeneration, revision: identity.revision };
+          source.lineage.appliedPacFingerprint = source.fetchedPacFingerprint;
+          decide(source, Decision.FailClosedBlockingApplied, describe(identity) + lineageNote);
+        } else {
+          decide(source, Decision.ApplyFailed, diagnostics.status);
+        }
+        return finish(source, diagnostics);
+      }
+
+      decide(source, Decision.BrowserProxyUnavailable, "state " + describe(identity) + " not applied" + lineageNote);
+      return finish(source, currentDiagnostics);
+    }
+
+    source.fetchedPacFingerprint = pacApplyFingerprint(identity, snapshot.browserProxy);
+
+    const appliedFingerprint = source.lineage.appliedPacFingerprint;
+    if (samePacApplyFingerprint(appliedFingerprint, source.fetchedPacFingerprint)) {
+      const stillActive = currentDiagnostics.status === Status.Applied && currentDiagnostics.active.pac === ActivePac.Current &&
+        currentDiagnostics.active.revision === identity.revision && sameEndpoint(currentDiagnostics.lastApplied, endpoint);
       if (stillActive) {
         decide(source, Decision.Unchanged, describe(identity));
-        return finish(source, current);
+        return finish(source, currentDiagnostics);
       }
     }
 
     const diagnostics = await controller.apply(reason, { state: snapshot.state, proxyEndpoint: endpoint });
     if (diagnostics.status === Status.Applied && diagnostics.lastApplied && diagnostics.lastApplied.revision === identity.revision) {
       source.lineage.appliedIdentity = { stateGeneration: identity.stateGeneration, revision: identity.revision };
+      source.lineage.appliedPacFingerprint = pacApplyFingerprint(identity, snapshot.browserProxy);
       decide(source, Decision.Applied, describe(identity) + lineageNote);
     } else {
       decide(source, Decision.ApplyFailed, diagnostics.status);

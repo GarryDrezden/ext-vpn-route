@@ -19,25 +19,36 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { extensionIdFromKey } from "./extension-id.js";
 import { createLargeFixtureState, renderFixtureModule } from "./large-fixture.js";
+import {
+  SLICE8_FAILCLOSED_FIXTURE_NAME,
+  SLICE8_FAILCLOSED_VERSION_NAME,
+  isChromiumManifestVersion,
+  renderSlice8FailClosedSmokeModule
+} from "./slice8-failclosed-fixture.js";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const DIST_ROOT = path.join(ROOT, "dist");
 export const DEFAULT_OUT = path.join(DIST_ROOT, "extension");
 export const PRODUCTION_EXTENSION_ID = "lfaekfalhkgmbfdjjlfcalanhijeaien";
 export const SPIKE_EXTENSION_ID = "onodojebmdbcndjelgfhoiffeojngmbd";
-export const FIXTURES = Object.freeze(["normal", "large"]);
+export const FIXTURES = Object.freeze(["normal", "large", "slice8-failclosed"]);
+export const ARTIFACTS_ROOT = path.join(ROOT, "artifacts");
 export const MODES = Object.freeze(["fixture", "native"]);
 export const NATIVE_HOST_NAME = "com.vpnroute.browser";
 
 const NATIVE_ONLY_FILES = Object.freeze([
-  "state/source-native.js", "state/native-state-provider.js", "state/snapshot.js"
+  "state/source-native.js", "state/native-state-provider.js"
 ]);
 const FIXTURE_ONLY_FILES = Object.freeze(["state/smoke-state.js", "state/source.js"]);
 const NATIVE_MESSAGING_FILE = "extension/state/native-state-provider.js";
 
 const SOURCES = Object.freeze({
   fixture: Object.freeze([
-    { from: "src/extension", to: "extension", skip: ["manifest.json", ...NATIVE_ONLY_FILES] },
+    {
+      from: "src/extension",
+      to: "extension",
+      skip: ["manifest.json", ...NATIVE_ONLY_FILES, "state/source-slice8-failclosed.js"]
+    },
     { from: "src/pac", to: "pac" },
     { from: "src/domain/browser-routing", to: "domain/browser-routing" }
   ]),
@@ -45,7 +56,7 @@ const SOURCES = Object.freeze({
     {
       from: "src/extension",
       to: "extension",
-      skip: ["manifest.json", "state/source-native.js", ...FIXTURE_ONLY_FILES],
+      skip: ["manifest.json", "state/source-native.js", "state/source-slice8-failclosed.js", ...FIXTURE_ONLY_FILES],
       rename: { "state/source-native.js": "state/source.js" }
     },
     { from: "src/pac", to: "pac" },
@@ -54,9 +65,12 @@ const SOURCES = Object.freeze({
 });
 const ALLOWED_EXTENSIONS = Object.freeze([".js", ".json", ".html", ".css"]);
 const PERMISSIONS = Object.freeze({
-  fixture: Object.freeze(["proxy", "storage"]),
-  native: Object.freeze(["nativeMessaging", "proxy", "storage"])
+  fixture: Object.freeze(["proxy", "storage", "alarms"]),
+  native: Object.freeze(["nativeMessaging", "proxy", "storage", "alarms"])
 });
+const ALARMS_ALLOWED_FILES = Object.freeze([
+  "extension/runtime/refresh-alarm.js"
+]);
 const FORBIDDEN_MANIFEST_KEYS = Object.freeze([
   "host_permissions", "optional_permissions", "optional_host_permissions", "content_scripts",
   "externally_connectable", "web_accessible_resources", "content_security_policy", "update_url"
@@ -89,11 +103,13 @@ const NATIVE_MESSAGING_CODE = /\bsendNativeMessage\b|\bnativeMessaging\b/;
 
 function assertSafeOut(outDir) {
   const resolved = path.resolve(outDir);
-  const relative = path.relative(DIST_ROOT, resolved);
-  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error("Refusing to build outside " + DIST_ROOT + ": " + resolved);
+  for (const root of [DIST_ROOT, ARTIFACTS_ROOT]) {
+    const relative = path.relative(root, resolved);
+    if (relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+      return resolved;
+    }
   }
-  return resolved;
+  throw new Error("Refusing to build outside " + DIST_ROOT + " or " + ARTIFACTS_ROOT + ": " + resolved);
 }
 
 function walk(dir, base = dir) {
@@ -141,6 +157,20 @@ export async function buildExtension(options = {}) {
   if (fixture === "large") {
     writeFileSync(path.join(outDir, "extension/state/smoke-state.js"),
       renderFixtureModule("large", createLargeFixtureState()), "utf8");
+  }
+  if (fixture === SLICE8_FAILCLOSED_FIXTURE_NAME) {
+    writeFileSync(path.join(outDir, "extension/state/smoke-state.js"), renderSlice8FailClosedSmokeModule(), "utf8");
+    copyFile(
+      path.join(ROOT, "src/extension/state/source-slice8-failclosed.js"),
+      path.join(outDir, "extension/state/source.js")
+    );
+    const spikeManifest = JSON.parse(readFileSync(path.join(ROOT, "spike/extension/manifest.json"), "utf8"));
+    manifest.name = "VPN Route — Slice8 Fail-Closed Fixture";
+    manifest.description =
+      "Temporary browser acceptance: mandatory blocking PAC (SOCKS5 127.0.0.1:0). Disable production VPN Route while testing.";
+    manifest.version_name = SLICE8_FAILCLOSED_VERSION_NAME;
+    manifest.key = spikeManifest.key;
+    writeFileSync(path.join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf8");
   }
 
   return validateExtension(outDir, { expectMode: mode, expectFixture: fixture });
@@ -195,9 +225,18 @@ export async function validateExtension(outDir, options = {}) {
   const manifest = JSON.parse(readFileSync(path.join(outDir, "manifest.json"), "utf8"));
   if (manifest.manifest_version !== 3) problems.push("manifest_version must be 3");
   if (typeof manifest.name !== "string" || typeof manifest.version !== "string") problems.push("manifest name/version missing");
+  if (!isChromiumManifestVersion(manifest.version)) {
+    problems.push("manifest.version is not Chromium-compatible: " + manifest.version);
+  }
+  if (options.expectFixture === SLICE8_FAILCLOSED_FIXTURE_NAME) {
+    if (manifest.version_name !== SLICE8_FAILCLOSED_VERSION_NAME) {
+      problems.push("slice8-failclosed fixture must set version_name to " + SLICE8_FAILCLOSED_VERSION_NAME);
+    }
+  }
   const permissions = Array.isArray(manifest.permissions) ? [...manifest.permissions].sort() : [];
-  if (JSON.stringify(permissions) !== JSON.stringify(PERMISSIONS[mode])) {
-    problems.push("permissions must be exactly " + PERMISSIONS[mode].join(", ") + "; got " + permissions.join(", "));
+  const expectedPermissions = [...PERMISSIONS[mode]].sort();
+  if (JSON.stringify(permissions) !== JSON.stringify(expectedPermissions)) {
+    problems.push("permissions must be exactly " + expectedPermissions.join(", ") + "; got " + permissions.join(", "));
   }
   for (const key of FORBIDDEN_MANIFEST_KEYS) {
     if (key in manifest) problems.push("manifest must not declare " + key);
@@ -209,7 +248,12 @@ export async function validateExtension(outDir, options = {}) {
   }
   if (typeof manifest.key !== "string") problems.push("manifest key missing");
   const extensionId = typeof manifest.key === "string" ? extensionIdFromKey(manifest.key) : null;
-  if (extensionId !== PRODUCTION_EXTENSION_ID) problems.push("extension ID " + extensionId + " is not " + PRODUCTION_EXTENSION_ID);
+  const expectedExtensionId = options.expectFixture === SLICE8_FAILCLOSED_FIXTURE_NAME
+    ? SPIKE_EXTENSION_ID
+    : PRODUCTION_EXTENSION_ID;
+  if (extensionId !== expectedExtensionId) {
+    problems.push("extension ID " + extensionId + " is not " + expectedExtensionId);
+  }
 
   const jsFiles = files.filter((file) => file.endsWith(".js"));
   for (const file of jsFiles) {
@@ -225,6 +269,7 @@ export async function validateExtension(outDir, options = {}) {
       else if (!existsSync(target)) problems.push(file + ": unresolved import " + specifier);
     }
     for (const [pattern, label] of FORBIDDEN_CODE) {
+      if (label === "chrome.alarms polling" && ALARMS_ALLOWED_FILES.includes(file)) continue;
       if (pattern.test(source)) problems.push(file + ": forbidden " + label);
     }
     if (NATIVE_MESSAGING_CODE.test(source) && !(mode === "native" && file === NATIVE_MESSAGING_FILE)) {
@@ -275,7 +320,10 @@ export async function validateExtension(outDir, options = {}) {
   if (options.expectFixture && fixtureModule.FIXTURE_NAME !== options.expectFixture) {
     throw new Error("Fixture is " + fixtureModule.FIXTURE_NAME + ", expected " + options.expectFixture);
   }
-  const compiled = compilePacScript(fixtureModule.SMOKE_STATE, PHASE3_PROXY_ENDPOINT);
+  const compileOptions = options.expectFixture === SLICE8_FAILCLOSED_FIXTURE_NAME
+    ? { failClosedBlocking: true }
+    : { proxyHost: PHASE3_PROXY_ENDPOINT.proxyHost, proxyPort: PHASE3_PROXY_ENDPOINT.proxyPort };
+  const compiled = compilePacScript(fixtureModule.SMOKE_STATE, compileOptions);
   if (!compiled.ok) throw new Error("Fixture does not compile: " + compiled.error.code);
 
   return {

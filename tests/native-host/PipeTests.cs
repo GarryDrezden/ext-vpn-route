@@ -31,7 +31,7 @@ public class PipeTests
         });
         var client = new BrowserRoutingPipeClient(server.Name);
 
-        var manifest = await client.GetManifestAsync("m-1", CancellationToken.None);
+        var manifest = await client.GetManifestAsync("m-1", null, CancellationToken.None);
         var page = await client.GetPageAsync("p-1", Identity, 7, CancellationToken.None);
 
         Assert.Equal(SampleService.Manifest(), Encoding.UTF8.GetString(manifest.Result!));
@@ -67,7 +67,7 @@ public class PipeTests
             _ => FakeServicePipe.Frame(FakeServicePipe.Ok("someone-else", SampleService.Manifest()))
         }));
         await Assert.ThrowsAsync<InvalidServiceResponseException>(
-            () => new BrowserRoutingPipeClient(server.Name).GetManifestAsync("m-1", CancellationToken.None));
+            () => new BrowserRoutingPipeClient(server.Name).GetManifestAsync("m-1", null, CancellationToken.None));
     }
 
     [Fact]
@@ -75,7 +75,7 @@ public class PipeTests
     {
         var watch = Stopwatch.StartNew();
         await Assert.ThrowsAsync<ServiceUnavailableException>(
-            () => new BrowserRoutingPipeClient(FakeServicePipe.NewTestPipeName()).GetManifestAsync("m-1", CancellationToken.None));
+            () => new BrowserRoutingPipeClient(FakeServicePipe.NewTestPipeName()).GetManifestAsync("m-1", null, CancellationToken.None));
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), watch.Elapsed.ToString());
     }
 
@@ -83,7 +83,7 @@ public class PipeTests
     public async Task Client_WithRejectedPipeName_NeverConnects()
     {
         await Assert.ThrowsAsync<ServiceUnavailableException>(
-            () => new BrowserRoutingPipeClient(null).GetManifestAsync("m-1", CancellationToken.None));
+            () => new BrowserRoutingPipeClient(null).GetManifestAsync("m-1", null, CancellationToken.None));
     }
 
     [Fact]

@@ -99,7 +99,7 @@ test("Native extension build: no fixture, no spike endpoint in use, no rules in 
 
 test("extension applies only Ready loopback endpoints and never installs DIRECT on failure", () => {
   const coordinator = read("src/extension/runtime/routing-coordinator.js");
-  assert.match(coordinator, /snapshot\.browserProxy\.status !== "Ready"/);
+  assert.match(coordinator, /stateRequiresVpnFailClosedRouting|snapshot\.browserProxy\.status === "Ready"/);
   assert.doesNotMatch(coordinator, /mode:\s*"direct"|"DIRECT"/);
   const controller = read("src/extension/runtime/proxy-controller.js");
   assert.doesNotMatch(controller, /mode:\s*"direct"|mode:\s*"system"/);

@@ -20,8 +20,8 @@ internal sealed class BrowserRoutingPipeClient(string? pipeName = ServiceIpcV1.P
 {
     private static readonly JsonDocumentOptions ResponseOptions = new() { MaxDepth = 16 };
 
-    public Task<ServiceReply> GetManifestAsync(string correlationId, CancellationToken cancellationToken) =>
-        SendAsync(correlationId, BuildRequest(correlationId, ServiceIpcV1.Methods.GetManifest, null), cancellationToken);
+    public Task<ServiceReply> GetManifestAsync(string correlationId, ManifestClientInfo? client, CancellationToken cancellationToken) =>
+        SendAsync(correlationId, BuildManifestRequest(correlationId, client), cancellationToken);
 
     public Task<ServiceReply> GetPageAsync(string correlationId, SnapshotIdentity identity, int startIndex, CancellationToken cancellationToken) =>
         SendAsync(correlationId, BuildRequest(correlationId, ServiceIpcV1.Methods.GetPage, writer =>
@@ -127,6 +127,19 @@ internal sealed class BrowserRoutingPipeClient(string? pipeName = ServiceIpcV1.P
         {
             throw new InvalidServiceResponseException();
         }
+    }
+
+    private static byte[] BuildManifestRequest(string id, ManifestClientInfo? client)
+    {
+        if (client is null)
+            return BuildRequest(id, ServiceIpcV1.Methods.GetManifest, null);
+        return BuildRequest(id, ServiceIpcV1.Methods.GetManifest, writer =>
+        {
+            writer.WriteStartObject("client");
+            writer.WriteString("extensionVersion", client.ExtensionVersion);
+            writer.WriteString("nativeHostVersion", client.NativeHostVersion);
+            writer.WriteEndObject();
+        });
     }
 
     private static byte[] BuildRequest(string id, string method, Action<Utf8JsonWriter>? writeParams)

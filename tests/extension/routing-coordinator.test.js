@@ -10,12 +10,15 @@ import {
   computeProtection,
   createRoutingCoordinator
 } from "../../src/extension/runtime/routing-coordinator.js";
+import { pacApplyFingerprint } from "../../src/extension/state/integration-manifest.js";
 import { createNativeStateProvider } from "../../src/extension/state/native-state-provider.js";
 import { PHASE3_PROXY_ENDPOINT } from "../../src/extension/runtime/config.js";
 import { SMOKE_STATE } from "../../src/extension/state/smoke-state.js";
 import {
   GEN_A,
   GEN_B,
+  INTEGRATION_V1,
+  READY,
   UNAVAILABLE,
   createFakeNativeRuntime,
   createFakeProxy,
@@ -265,7 +268,7 @@ describe("coordinator: generation lineage", () => {
     const sourceStorage = createFakeStorage({ sourceVersion: 1, lineage: { lastAppliedRevision: 9000 } });
     const ctx = nativeSetup({ sourceStorage, handler: serving(42) });
     const view = await ctx.coordinator.sync("startup");
-    assert.equal(view.source.sourceVersion, 2);
+    assert.equal(view.source.sourceVersion, 3);
     assert.equal(view.source.lastDecision.kind, Decision.Applied);
     assert.equal("lastAppliedRevision" in view.source.lineage, false);
   });
@@ -273,7 +276,8 @@ describe("coordinator: generation lineage", () => {
 
 describe("coordinator: browser proxy readiness", () => {
   test("Unavailable without any PAC: state available, nothing applied, NOT_PROTECTED", async () => {
-    const ctx = nativeSetup({ handler: serving(42, { browserProxy: UNAVAILABLE }) });
+    const directOnly = { schemaVersion: 1, revision: 42, defaultRoute: "Direct", rules: [] };
+    const ctx = nativeSetup({ handler: nativeHostServing(directOnly, { browserProxy: UNAVAILABLE, integration: INTEGRATION_V1 }) });
     const view = await ctx.coordinator.sync("startup");
 
     assert.equal(view.source.service, "AVAILABLE");
@@ -531,11 +535,15 @@ describe("coordinator: clear and fixture isolation", () => {
 
 describe("routing protection", () => {
   const applied = (pac, revision, status = "APPLIED") => ({ status, active: { pac, revision } });
-  const source = (result, fetched, appliedIdentity, browserProxy = "READY") => ({
+  const source = (result, fetched, appliedIdentity, browserProxy = "READY", browserProxyObj = READY) => ({
     lastFetch: { result },
     browserProxy,
     fetchedIdentity: fetched,
-    lineage: { appliedIdentity }
+    fetchedPacFingerprint: fetched ? pacApplyFingerprint(fetched, browserProxyObj) : null,
+    lineage: {
+      appliedIdentity,
+      appliedPacFingerprint: appliedIdentity ? pacApplyFingerprint(appliedIdentity, browserProxyObj) : null
+    }
   });
   const a43 = { stateGeneration: GEN_A, revision: 43 };
   const a42 = { stateGeneration: GEN_A, revision: 42 };

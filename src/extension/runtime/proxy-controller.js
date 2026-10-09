@@ -147,7 +147,7 @@ function compileSummary(result) {
       revision: m.revision,
       byteLength: m.byteLength,
       proxyRoute: m.proxyRoute,
-      endpoint: m.proxyEndpoint.host + ":" + m.proxyEndpoint.port,
+      endpoint: m.failClosedBlocking ? m.proxyRoute : m.proxyEndpoint.host + ":" + m.proxyEndpoint.port,
       enabledRuleCount: m.enabledRuleCount,
       exactRuleCount: m.exactRuleCount,
       domainRuleCount: m.domainRuleCount
@@ -215,10 +215,14 @@ export function createProxyController(deps) {
       let options;
       if (snapshot) {
         state = snapshot.state;
-        options = { proxyHost: snapshot.proxyEndpoint.host, proxyPort: snapshot.proxyEndpoint.port };
+        options = snapshot.failClosedBlocking
+          ? { failClosedBlocking: true }
+          : { proxyHost: snapshot.proxyEndpoint.host, proxyPort: snapshot.proxyEndpoint.port };
       } else if (hasBuiltInState) {
         state = deps.loadState();
-        options = { proxyHost: deps.endpoint.proxyHost, proxyPort: deps.endpoint.proxyPort };
+        options = deps.failClosedBlocking === true
+          ? { failClosedBlocking: true }
+          : { proxyHost: deps.endpoint.proxyHost, proxyPort: deps.endpoint.proxyPort };
       } else {
         throw new Error("No state snapshot was supplied.");
       }

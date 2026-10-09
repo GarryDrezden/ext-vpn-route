@@ -21,11 +21,14 @@ internal sealed class FakeServiceClient(
     public List<ServiceCall> Requests { get; } = [];
     public int Calls => Requests.Count;
 
-    public Task<ServiceReply> GetManifestAsync(string correlationId, CancellationToken cancellationToken)
+    public Task<ServiceReply> GetManifestAsync(string correlationId, ManifestClientInfo? client, CancellationToken cancellationToken)
     {
         Requests.Add(new(correlationId, null, null));
+        LastManifestClient = client;
         return manifest(cancellationToken);
     }
+
+    public ManifestClientInfo? LastManifestClient { get; private set; }
 
     public Task<ServiceReply> GetPageAsync(string correlationId, SnapshotIdentity identity, int startIndex, CancellationToken cancellationToken)
     {

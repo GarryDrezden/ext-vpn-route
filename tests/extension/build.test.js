@@ -27,15 +27,16 @@ const EXPECTED_FILES = [
   "domain/browser-routing/state.js",
   "extension/background.js", "extension/popup/popup.css", "extension/popup/popup.html", "extension/popup/popup.js",
   "extension/runtime/chrome-adapter.js", "extension/runtime/config.js", "extension/runtime/proxy-controller.js",
-  "extension/runtime/routing-coordinator.js",
+  "extension/runtime/refresh-alarm.js", "extension/runtime/routing-coordinator.js",
+  "extension/state/integration-manifest.js", "extension/state/snapshot.js", "extension/state/vpn-routing-policy.js",
   "extension/state/smoke-state.js", "extension/state/source.js",
   "manifest.json",
-  "pac/compiler.js", "pac/endpoint.js", "pac/index.js", "pac/literal.js", "pac/policy.js", "pac/runtime.js"
-];
+  "pac/blocking.js", "pac/compiler.js", "pac/endpoint.js", "pac/index.js", "pac/literal.js", "pac/policy.js", "pac/runtime.js"
+].sort();
 
 const EXPECTED_NATIVE_FILES = EXPECTED_FILES
   .filter((file) => file !== "extension/state/smoke-state.js")
-  .concat(["extension/state/native-state-provider.js", "extension/state/snapshot.js"])
+  .concat(["extension/state/native-state-provider.js"])
   .sort();
 
 let normal;
@@ -64,10 +65,10 @@ describe("extension build output", () => {
     assert.deepEqual(normal.files, EXPECTED_FILES);
   });
 
-  test("manifest is MV3 with a module service worker and only proxy + storage", () => {
+  test("manifest is MV3 with a module service worker and proxy, storage, alarms", () => {
     const manifest = JSON.parse(readFileSync(path.join(normal.outDir, "manifest.json"), "utf8"));
     assert.equal(manifest.manifest_version, 3);
-    assert.deepEqual(manifest.permissions, ["proxy", "storage"]);
+    assert.deepEqual(manifest.permissions, ["proxy", "storage", "alarms"]);
     assert.deepEqual(manifest.background, { service_worker: "extension/background.js", type: "module" });
     assert.equal(manifest.action.default_popup, "extension/popup/popup.html");
     for (const key of ["host_permissions", "content_scripts", "optional_permissions", "externally_connectable"]) {
@@ -154,11 +155,11 @@ describe("build validation rejects bad output", () => {
 
     dir = copyBuild("fixture-native-permission");
     editManifest(dir, (m) => { m.permissions.push("nativeMessaging"); });
-    await assert.rejects(validateExtension(dir, { expectMode: "fixture" }), /permissions must be exactly proxy, storage/);
+    await assert.rejects(validateExtension(dir, { expectMode: "fixture" }), /permissions must be exactly alarms, proxy, storage/);
 
     dir = copyBuild("fixture-native-file");
-    cpSync(path.join(ROOT, "src/extension/state/snapshot.js"), path.join(dir, "extension/state/snapshot.js"));
-    await assert.rejects(validateExtension(dir, { expectMode: "fixture" }), /must not contain extension\/state\/snapshot\.js/);
+    cpSync(path.join(ROOT, "src/extension/state/native-state-provider.js"), path.join(dir, "extension/state/native-state-provider.js"));
+    await assert.rejects(validateExtension(dir, { expectMode: "fixture" }), /must not contain extension\/state\/native-state-provider\.js/);
   });
 });
 
@@ -176,9 +177,9 @@ describe("native build", () => {
     }
   });
 
-  test("manifest adds only nativeMessaging", () => {
+  test("manifest adds nativeMessaging and alarms", () => {
     const manifest = JSON.parse(readFileSync(path.join(native.outDir, "manifest.json"), "utf8"));
-    assert.deepEqual(manifest.permissions, ["nativeMessaging", "proxy", "storage"]);
+    assert.deepEqual(manifest.permissions, ["nativeMessaging", "proxy", "storage", "alarms"]);
     for (const key of ["host_permissions", "content_scripts", "optional_permissions", "externally_connectable"]) {
       assert.equal(key in manifest, false, key);
     }
@@ -205,8 +206,8 @@ describe("native build", () => {
     ["native call elsewhere", (dir) => appendTo(dir, "extension/background.js", "\nchrome.runtime.sendNativeMessage(\"x\", {});\n"),
       /native messaging is allowed only/],
     ["extra permission", (dir) => editManifest(dir, (m) => { m.permissions.push("tabs"); }), /permissions must be exactly/],
-    ["missing nativeMessaging", (dir) => editManifest(dir, (m) => { m.permissions = ["proxy", "storage"]; }),
-      /permissions must be exactly nativeMessaging, proxy, storage/],
+    ["missing nativeMessaging", (dir) => editManifest(dir, (m) => { m.permissions = ["proxy", "storage", "alarms"]; }),
+      /permissions must be exactly alarms, nativeMessaging, proxy, storage/],
     ["host name", (dir) => {
       const full = path.join(dir, "extension/runtime/config.js");
       writeFileSync(full, readFileSync(full, "utf8").replace("com.vpnroute.browser", "com.vpnroute.phase0b"));

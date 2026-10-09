@@ -123,6 +123,7 @@ describe("compiler metadata", () => {
       schemaVersion: 1,
       revision: 42,
       defaultRoute: "VPN",
+      failClosedBlocking: false,
       proxyEndpoint: { host: "127.0.0.1", port: PORT },
       proxyRoute: VPN,
       ruleCount: 7,

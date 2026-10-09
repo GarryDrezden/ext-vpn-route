@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "integrationApiVersion": 1,
+  "serviceVersion": "0.0.0-example",
+  "capabilities": [
+    "browserRoutingState",
+    "browserExplicitSocks",
+    "vpnEgressReadiness",
+    "browserClientHeartbeat"
+  ],
+  "stateGeneration": "75f5c435-6ac5-45a5-876b-042a6376635e",
+  "revision": 0,
+  "defaultRoute": "Direct",
+  "ruleCount": 0,
+  "pageBudgetBytes": 520192,
+  "browserProxy": {
+    "status": "Ready",
+    "endpoint": {
+      "host": "127.0.0.1",
+      "port": 54321
+    }
+  },
+  "vpnEgress": {
+    "status": "Unavailable",
+    "interfaceIndex": null,
+    "interfaceName": null
+  },
+  "browserClient": {
+    "status": "NeverSeen",
+    "lastSeenUtc": null
+  }
+}

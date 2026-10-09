@@ -26,12 +26,26 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
     private static readonly JsonDocumentOptions ResultJsonOptions = new() { MaxDepth = 8 };
 
     private static readonly HashSet<string> BaseFields = new(StringComparer.Ordinal) { "protocolVersion", "requestId", "command" };
+    private static readonly HashSet<string> ManifestRequestFields = new(StringComparer.Ordinal)
+    {
+        "protocolVersion", "requestId", "command", "client"
+    };
     private static readonly HashSet<string> PageFields = new(StringComparer.Ordinal)
     {
         "protocolVersion", "requestId", "command", "stateGeneration", "revision", "startIndex"
     };
 
-    private static readonly string[] ManifestResultFields =
+    private static readonly HashSet<string> RequestFieldAllowlist = new(StringComparer.Ordinal)
+    {
+        "protocolVersion", "requestId", "command", "client", "stateGeneration", "revision", "startIndex"
+    };
+
+    private static readonly HashSet<string> ManifestOptionalFields = new(StringComparer.Ordinal)
+    {
+        "integrationApiVersion", "serviceVersion", "capabilities", "vpnEgress", "browserClient"
+    };
+
+    private static readonly string[] ManifestRequiredFields =
         ["schemaVersion", "stateGeneration", "revision", "defaultRoute", "ruleCount", "pageBudgetBytes", "browserProxy"];
     private static readonly string[] PageResultFields = ["stateGeneration", "revision", "startIndex", "nextIndex", "rules"];
 
@@ -53,7 +67,7 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         using (document)
         {
             var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object || !HasOnlyFields(root, PageFields))
+            if (root.ValueKind != JsonValueKind.Object || !HasOnlyFields(root, RequestFieldAllowlist))
                 return Fail(null, "-", ProtocolV1.Errors.InvalidRequest);
 
             var requestId = ReadRequestId(root);
@@ -70,13 +84,15 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
                 return Fail(requestId, "-", ProtocolV1.Errors.InvalidRequest);
 
             var command = commandElement.GetString();
-            if ((command is ProtocolV1.Commands.Ping or ProtocolV1.Commands.GetStateManifest) && !HasOnlyFields(root, BaseFields))
+            if (command is ProtocolV1.Commands.Ping && !HasOnlyFields(root, BaseFields))
+                return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+            if (command is ProtocolV1.Commands.GetStateManifest && !HasOnlyFields(root, ManifestRequestFields))
                 return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
 
             return command switch
             {
                 ProtocolV1.Commands.Ping => Ping(requestId),
-                ProtocolV1.Commands.GetStateManifest => await ManifestAsync(requestId, cancellationToken).ConfigureAwait(false),
+                ProtocolV1.Commands.GetStateManifest => await ManifestAsync(requestId, root, cancellationToken).ConfigureAwait(false),
                 ProtocolV1.Commands.GetStatePage => await PageAsync(requestId, root, cancellationToken).ConfigureAwait(false),
                 _ => Fail(requestId, "unknown", ProtocolV1.Errors.UnknownCommand)
             };
@@ -97,10 +113,27 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         return new DispatchResult(response, ProtocolV1.Commands.Ping, "ok");
     }
 
-    private async Task<DispatchResult> ManifestAsync(string requestId, CancellationToken cancellationToken)
+    private async Task<DispatchResult> ManifestAsync(string requestId, JsonElement root, CancellationToken cancellationToken)
     {
         const string command = ProtocolV1.Commands.GetStateManifest;
-        var call = await CallAsync(requestId, command, token => serviceClient.GetManifestAsync(requestId, token), cancellationToken)
+        ManifestClientInfo? client = null;
+        if (root.TryGetProperty("client", out var clientElement))
+        {
+            if (clientElement.ValueKind != JsonValueKind.Object ||
+                !HasExactFields(clientElement, ["extensionVersion", "nativeHostVersion"]) ||
+                clientElement.GetProperty("extensionVersion").ValueKind != JsonValueKind.String ||
+                clientElement.GetProperty("nativeHostVersion").ValueKind != JsonValueKind.String ||
+                !IsBoundedClientVersion(clientElement.GetProperty("extensionVersion").GetString()) ||
+                !IsBoundedClientVersion(clientElement.GetProperty("nativeHostVersion").GetString()))
+            {
+                return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+            }
+            client = new ManifestClientInfo(
+                clientElement.GetProperty("extensionVersion").GetString()!,
+                clientElement.GetProperty("nativeHostVersion").GetString()!);
+        }
+
+        var call = await CallAsync(requestId, command, token => serviceClient.GetManifestAsync(requestId, client, token), cancellationToken)
             .ConfigureAwait(false);
         if (call.Failure is { } failure)
             return failure;
@@ -191,8 +224,13 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         if (document is null)
             return false;
         var root = document.RootElement;
-        if (!HasExactFields(root, ManifestResultFields))
+        if (!HasRequiredFields(root, ManifestRequiredFields))
             return false;
+        foreach (var property in root.EnumerateObject())
+        {
+            if (!ManifestRequiredFields.Contains(property.Name) && !ManifestOptionalFields.Contains(property.Name))
+                return false;
+        }
         if (root.GetProperty("stateGeneration") is not { ValueKind: JsonValueKind.String } generation || !IsGeneration(generation.GetString()))
             return false;
         if (!TryReadInteger(root.GetProperty("revision"), ProtocolV1.MaxRevision, out _) ||
@@ -279,6 +317,25 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         }
         return seen.Count == fields.Count;
     }
+
+    private static bool HasRequiredFields(JsonElement element, IReadOnlyCollection<string> required)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!seen.Add(property.Name))
+                return false;
+        }
+        foreach (var field in required)
+        {
+            if (!seen.Contains(field))
+                return false;
+        }
+        return true;
+    }
+
+    private static bool IsBoundedClientVersion(string? value) =>
+        value is { Length: > 0 and <= 128 } && value.All(static c => c is >= (char)32 and <= (char)126);
 
     private static bool TryReadInteger(JsonElement element, long max, out long value)
     {

@@ -3,6 +3,7 @@ import { createChromeProxy, createChromeStorage } from "./runtime/chrome-adapter
 import { DIAGNOSTICS_STORAGE_KEY, SOURCE_STORAGE_KEY } from "./runtime/config.js";
 import { createProxyController } from "./runtime/proxy-controller.js";
 import { createRoutingCoordinator } from "./runtime/routing-coordinator.js";
+import { installRefreshAlarmHooks, wireRefreshAlarmListener } from "./runtime/refresh-alarm.js";
 import { createStateSource } from "./state/source.js";
 
 const source = createStateSource(chrome);
@@ -24,6 +25,9 @@ const coordinator = createRoutingCoordinator({
 function report(label) {
   return (error) => console.error("[VPN Route] " + label + " failed: " + (error && error.message));
 }
+
+installRefreshAlarmHooks(chrome, report);
+wireRefreshAlarmListener(chrome, coordinator, report);
 
 chrome.runtime.onInstalled.addListener(() => {
   coordinator.sync("installed").catch(report("sync on install"));

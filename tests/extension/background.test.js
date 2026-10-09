@@ -1,10 +1,19 @@
-import { test } from "node:test";
+import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DIST_ROOT, buildExtension } from "../../scripts/build-extension.js";
-import { UNAVAILABLE, createFakeNativeRuntime, createFakeProxy, nativeHostFailing, nativeHostReturning, routingState } from "./fakes.js";
+import {
+  UNAVAILABLE,
+  createFakeNativeRuntime,
+  createFakeProxy,
+  fireInstalled,
+  fireStartup,
+  nativeHostFailing,
+  nativeHostReturning,
+  routingState
+} from "./fakes.js";
 
 const EXTENSION_ID = "lfaekfalhkgmbfdjjlfcalanhijeaien";
 
@@ -62,19 +71,20 @@ function send(chrome, message, sender = { id: EXTENSION_ID }) {
   });
 }
 
+describe("extension background service worker", { concurrency: 1 }, () => {
 test("service worker wires lifecycle events, commands and chrome.runtime.lastError", async () => {
   const mock = createChromeMock();
   globalThis.chrome = mock.chrome;
   try {
     await import("../../src/extension/background.js");
     const { runtime, proxy } = mock.chrome;
-    assert.equal(runtime.onInstalled.listeners.length, 1);
-    assert.equal(runtime.onStartup.listeners.length, 1);
+    assert.equal(runtime.onInstalled.listeners.length, 2);
+    assert.equal(runtime.onStartup.listeners.length, 2);
     assert.equal(runtime.onMessage.listeners.length, 1);
     assert.equal(proxy.onProxyError.listeners.length, 1);
     assert.equal(mock.proxy.calls.set.length, 0, "loading the worker must not apply anything");
 
-    runtime.onInstalled.listeners[0]({ reason: "install" });
+    fireInstalled(runtime);
     let status = await send(mock.chrome, { command: "status" });
     assert.equal(status.ok, true);
     assert.equal(status.fixture, "normal");
@@ -103,7 +113,7 @@ test("service worker wires lifecycle events, commands and chrome.runtime.lastErr
     assert.equal(reapplied.diagnostics.status, "APPLIED");
 
     proxy.onProxyError.listeners[0]({ fatal: false, error: "net::ERR_PROXY_CONNECTION_FAILED", details: "" });
-    runtime.onStartup.listeners[0]();
+    fireStartup(runtime);
     status = await send(mock.chrome, { command: "status" });
     assert.equal(status.diagnostics.lastProxyError.error, "net::ERR_PROXY_CONNECTION_FAILED");
     assert.equal(status.diagnostics.status, "APPLIED");
@@ -135,7 +145,7 @@ test("native build service worker fetches state over native messaging and keeps 
     const { runtime } = mock.chrome;
     assert.equal(native.calls.length, 0, "loading the worker must not contact the host");
 
-    runtime.onInstalled.listeners[0]({ reason: "install" });
+    fireInstalled(runtime);
     let status = await send(mock.chrome, { command: "status" });
     assert.equal(status.mode, "Native");
     assert.equal(status.fixture, null);
@@ -154,10 +164,10 @@ test("native build service worker fetches state over native messaging and keeps 
     assert.equal(mock.proxy.calls.set.length, 1);
     assert.equal(mock.proxy.calls.clear, 0);
 
-    runtime.onStartup.listeners[0]();
+    fireStartup(runtime);
     status = await send(mock.chrome, { command: "status" });
     assert.deepEqual(native.calls.map((call) => call.message.command),
-      ["getStateManifest", "getStatePage", "getStateManifest", "getStateManifest"]);
+      ["ping", "getStateManifest", "getStatePage", "getStateManifest", "ping", "getStateManifest"]);
     assert.equal(mock.proxy.calls.set.length, 1);
 
     host.handler = nativeHostReturning(routingState(43), UNAVAILABLE);
@@ -175,4 +185,5 @@ test("native build service worker fetches state over native messaging and keeps 
     delete globalThis.chrome;
     rmSync(path.dirname(outDir), { recursive: true, force: true });
   }
+});
 });

@@ -6,6 +6,8 @@
 
 Версия IPC (`version: 1`) не зависит от версии Native Messaging (`protocolVersion: 1`). Они меняются независимо.
 
+**Browser Integration Port v1** (design: `Vpn-gateway/docs/superpowers/specs/2026-10-05-browser-integration-port-v1-design.md`) расширяет `getManifest` additive-полями и optional heartbeat. Пока Service на main не прошёл slices 4–5, production manifest может содержать только Phase 5 поля (см. ниже). Клиенты обязаны оставаться совместимыми с manifest **без** новых полей.
+
 ## Почему отдельный endpoint
 
 У Service уже есть pipe `\\.\pipe\SelectiveVpnRouter` (`IpcRequest{Version,Id,Method,PayloadJson}`). Переиспользовать его нельзя:
@@ -115,7 +117,36 @@ Int32 LE длина (1..max) + UTF-8 JSON
   - `{ "status": "Ready", "endpoint": { "host": "127.x.y.z", "port": 1..65535 } }`, если Service поднял explicit browser proxy;
   - иначе `{ "status": "Unavailable", "endpoint": null }`.
 
-  В Phase 5 explicit browser proxy в Service нет, production всегда отвечает `Unavailable`. `Ready` бывает только у тестового Service stand-in.
+  В Phase 5 explicit browser proxy в Service нет, production всегда отвечает `Unavailable`. `Ready` появится после Browser Integration Port v1 runtime (vpn-gateway slices 4–5).
+
+### Integration API v1 (additive manifest, major-only)
+
+| | |
+|---|---|
+| `integrationApiVersion` | Целое **major only** (сейчас `1`). Minor/additive — через `capabilities`, не через `1.1`. |
+| `serviceVersion` | Информативно; **не** compat gate. |
+| `capabilities` | Минимум v1 runtime: `browserRoutingState`, `browserExplicitSocks`, `vpnEgressReadiness`, `browserClientHeartbeat`. Будущее: `browserRuleWrite`, `browserDiagnostics`, `browserTrafficStats`. |
+| `vpnEgress` | `{ status: Ready\|Unavailable, interfaceIndex?, interfaceName? }` — authoritative RouterEngine tunnel state. |
+| `browserClient` | Last-contact telemetry: `NeverSeen` \| `RecentlySeen` \| `Stale`, `lastSeenUtc` (in-memory). **Не** live connection state. TTL `RecentlySeen` → `Stale`: **120 s** since `lastSeenUtc`. |
+
+Пример fixture: `contracts/browser-routing-v1/integration-manifest-v1.example.json`.
+
+**Dynamic `browserProxy.endpoint`:** порт loopback SOCKS — runtime state; смена `127.0.0.1:oldPort` → `127.0.0.1:newPort` **не** меняет `stateGeneration`/`revision`. Extension coordinator **обязан** reapply PAC при смене Ready endpoint. VPN-ветки PAC: `SOCKS5 127.0.0.1:<port>` **без** `; DIRECT` (fail-closed).
+
+**Heartbeat bootstrap:** первый `getManifest` в сессии Native Host — **без `params`** (совместимость со strict Phase 5). Последующие запросы с
+
+```json
+"params": {
+  "client": {
+    "extensionVersion": "…",
+    "nativeHostVersion": "…"
+  }
+}
+```
+
+разрешены **только** если `integrationApiVersion == 1` и в `capabilities` есть `browserClientHeartbeat`. Heartbeat не persist, не меняет `stateGeneration`/`revision`.
+
+**Application routing:** `yandex.exe` остаётся Direct на уровне VPN Route app rules; browser VPN только extension PAC → local SOCKS → Service → VPN.
 
 ## `getPage`
 

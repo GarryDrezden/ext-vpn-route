@@ -19,7 +19,7 @@ internal sealed record ServiceReply(byte[]? Result, string? ErrorCode)
 /// </summary>
 internal interface IServiceStateClient
 {
-    Task<ServiceReply> GetManifestAsync(string correlationId, CancellationToken cancellationToken);
+    Task<ServiceReply> GetManifestAsync(string correlationId, ManifestClientInfo? client, CancellationToken cancellationToken);
 
     Task<ServiceReply> GetPageAsync(string correlationId, SnapshotIdentity identity, int startIndex, CancellationToken cancellationToken);
 }

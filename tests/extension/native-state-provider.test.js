@@ -24,8 +24,30 @@ import {
 } from "./fakes.js";
 
 let counter = 0;
+
+function withPing(handler) {
+  return (host, message) => {
+    if (message.command === "ping") {
+      return {
+        response: {
+          protocolVersion: 1,
+          requestId: message.requestId,
+          ok: true,
+          result: {
+            command: "pong",
+            host: "SelectiveVpnRouter.NativeHost",
+            protocolVersion: 1,
+            hostVersion: "0.5.0-test"
+          }
+        }
+      };
+    }
+    return handler(host, message);
+  };
+}
+
 function provider(handler, extra = {}) {
-  const runtime = createFakeNativeRuntime(handler);
+  const runtime = createFakeNativeRuntime(withPing(handler));
   const instance = createNativeStateProvider({
     runtime,
     hostName: NATIVE_HOST_NAME,
@@ -72,11 +94,12 @@ describe("NativeStateProvider requests", () => {
     const result = await p.getSnapshot();
 
     assert.equal(result.ok, true);
-    assert.equal(runtime.calls.length, 4);
+    assert.ok(runtime.calls.length >= 5);
     assert.ok(runtime.calls.every((call) => call.hostName === "com.vpnroute.browser"));
-    assert.deepEqual(Object.keys(runtime.calls[0].message), ["protocolVersion", "requestId", "command"]);
-    assert.equal(runtime.calls[0].message.command, "getStateManifest");
-    for (const [i, start] of [[1, 0], [2, 2], [3, 4]]) {
+    assert.equal(runtime.calls[0].message.command, "ping");
+    assert.deepEqual(Object.keys(runtime.calls[1].message), ["protocolVersion", "requestId", "command"]);
+    assert.equal(runtime.calls[1].message.command, "getStateManifest");
+    for (const [i, start] of [[2, 0], [3, 2], [4, 4]]) {
       const message = runtime.calls[i].message;
       assert.deepEqual(Object.keys(message), ["protocolVersion", "requestId", "command", "stateGeneration", "revision", "startIndex"]);
       assert.equal(message.command, "getStatePage");
@@ -92,7 +115,8 @@ describe("NativeStateProvider requests", () => {
     const { runtime, provider: p } = provider(nativeHostServing({ schemaVersion: 1, revision: 0, defaultRoute: "Direct", rules: [] }));
     const result = await p.getSnapshot();
     assert.equal(result.ok, true);
-    assert.equal(runtime.calls.length, 1);
+    assert.equal(runtime.calls.length, 2);
+    assert.equal(runtime.calls[0].message.command, "ping");
     assert.deepEqual(result.snapshot.state.rules, []);
     assert.equal(result.stats.pages, 0);
   });
@@ -332,7 +356,8 @@ describe("NativeStateProvider envelope validation", () => {
 
 describe("NativeStateProvider manifest validation", () => {
   const cases = [
-    ["extra field", (m) => ({ ...m, serviceVersion: "x" }), NativeErrorCode.InvalidManifest],
+    ["integration v1 missing serviceVersion", (m) => ({ ...m, integrationApiVersion: 1, capabilities: ["browserExplicitSocks"] }), NativeErrorCode.InvalidManifest],
+    ["unsupported integration major", (m) => ({ ...m, integrationApiVersion: 2, serviceVersion: "x", capabilities: ["browserRoutingState"] }), NativeErrorCode.IntegrationApiIncompatible],
     ["missing ruleCount", (m) => { const { ruleCount, ...rest } = m; return rest; }, NativeErrorCode.InvalidManifest],
     ["schemaVersion 2", (m) => ({ ...m, schemaVersion: 2 }), NativeErrorCode.InvalidManifest],
     ["uppercase generation", (m) => ({ ...m, stateGeneration: GEN_A.toUpperCase() }), NativeErrorCode.InvalidManifest],
@@ -363,9 +388,20 @@ describe("NativeStateProvider manifest validation", () => {
       assert.equal(result.error.code, code);
       assert.equal(result.service, "AVAILABLE");
       assert.equal(result.state, "INVALID");
-      if (code !== NativeErrorCode.InvalidState) assert.equal(runtime.calls.length, 1);
+      if (code !== NativeErrorCode.InvalidState) {
+        assert.equal(runtime.calls.length, 2);
+        assert.equal(runtime.calls[0].message.command, "ping");
+        assert.equal(runtime.calls[1].message.command, "getStateManifest");
+      }
     });
   }
+
+  test("additive unknown manifest field is accepted", async () => {
+    const result = await provider(tamper(nativeHostServing(stateWith(3)), {
+      manifest: (m) => ({ ...m, futureSliceField: "ignored" })
+    })).provider.getSnapshot();
+    assert.equal(result.ok, true);
+  });
 
   test("other loopback addresses are accepted", async () => {
     const browserProxy = { status: "Ready", endpoint: { host: "127.10.0.2", port: 1080 } };
@@ -438,7 +474,8 @@ describe("NativeStateProvider page validation", () => {
       message.command === "getStatePage" ? hostError(message, "invalid_cursor") : serve(host, message));
     const result = await p.getSnapshot();
     assert.equal(result.error.hostErrorCode, "invalid_cursor");
-    assert.equal(runtime.calls.length, 2);
+    assert.equal(runtime.calls.length, 3);
+    assert.equal(runtime.calls[0].message.command, "ping");
   });
 });
 

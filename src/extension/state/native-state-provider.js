@@ -1,5 +1,11 @@
 import { Limits } from "../../domain/browser-routing/constants.js";
-import { STATE_GENERATION, createBrowserRoutingSnapshot, validateBrowserProxy } from "./snapshot.js";
+import { DEFAULT_NATIVE_HOST_VERSION, EXTENSION_VERSION } from "../runtime/config.js";
+import {
+  IntegrationErrorCode,
+  effectiveBrowserProxyReadiness,
+  parseIntegrationManifest
+} from "./integration-manifest.js";
+import { STATE_GENERATION, createBrowserRoutingSnapshot } from "./snapshot.js";
 
 /**
  * Fetches a BrowserRoutingSnapshot from the VPN Route native host: one getStateManifest
@@ -42,6 +48,8 @@ export const NativeErrorCode = Object.freeze({
   InvalidSnapshot: "invalid_snapshot",
   InvalidState: "invalid_state",
   InvalidEndpoint: "invalid_endpoint",
+  IntegrationApiIncompatible: "integration_api_incompatible",
+  ManifestInvalid: "manifest_invalid",
   ProviderException: "provider_exception"
 });
 
@@ -54,7 +62,6 @@ const HOST_NAME = /^[a-z0-9_]+(\.[a-z0-9_]+)*$/;
 const ERROR_CODE = /^[a-z0-9_]{1,64}$/;
 const SERVICE_DOWN_CODES = new Set(["service_unavailable", "service_timeout", "service_error", "service_untrusted"]);
 const STATE_DOWN_CODES = new Set(["browser_state_unavailable"]);
-const MANIFEST_FIELDS = ["schemaVersion", "stateGeneration", "revision", "defaultRoute", "ruleCount", "pageBudgetBytes", "browserProxy"];
 const PAGE_FIELDS = ["stateGeneration", "revision", "startIndex", "nextIndex", "rules"];
 const MAX_TEXT = 200;
 const encoder = new TextEncoder();
@@ -114,7 +121,9 @@ class SnapshotChanged {}
  *   now?: () => string,
  *   clock?: () => number,
  *   setTimer?: (fn: () => void, ms: number) => unknown,
- *   clearTimer?: (handle: unknown) => void
+ *   clearTimer?: (handle: unknown) => void,
+ *   extensionVersion?: string,
+ *   nativeHostVersion?: string
  * }} deps
  */
 export function createNativeStateProvider(deps) {
@@ -131,6 +140,68 @@ export function createNativeStateProvider(deps) {
   const clock = deps.clock || (() => Date.now());
   const setTimer = deps.setTimer || ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = deps.clearTimer || ((handle) => clearTimeout(handle));
+  const extensionVersion = deps.extensionVersion || EXTENSION_VERSION;
+  /** When set (tests), skips ping and pins heartbeat nativeHostVersion. */
+  const pinnedNativeHostVersion = deps.nativeHostVersion || null;
+  let runtimeNativeHostVersion = pinnedNativeHostVersion;
+
+  /** Per provider instance: heartbeat bootstrap is tied to this transport session. */
+  const integrationSession = {
+    requiresBootstrap: true,
+    heartbeatEnabled: false
+  };
+
+  function resetIntegrationSession() {
+    integrationSession.requiresBootstrap = true;
+    integrationSession.heartbeatEnabled = false;
+    if (!pinnedNativeHostVersion) runtimeNativeHostVersion = null;
+  }
+
+  function heartbeatNativeHostVersion() {
+    return pinnedNativeHostVersion || runtimeNativeHostVersion || DEFAULT_NATIVE_HOST_VERSION;
+  }
+
+  function readPingResult(response) {
+    if (!isPlainObject(response) || !hasExactKeys(response, ["command", "host", "protocolVersion", "hostVersion"])) {
+      throw new Failure(NativeErrorCode.MalformedResponse, "Ping result is invalid.", Transport.Error, ServiceStatus.Unknown);
+    }
+    if (response.command !== "pong" || response.protocolVersion !== NATIVE_PROTOCOL_VERSION) {
+      throw new Failure(NativeErrorCode.MalformedResponse, "Ping result is invalid.", Transport.Error, ServiceStatus.Unknown);
+    }
+    const version = response.hostVersion;
+    if (typeof version !== "string" || version.length === 0 || version.length > 128) {
+      throw new Failure(NativeErrorCode.MalformedResponse, "Ping hostVersion is invalid.", Transport.Error, ServiceStatus.Unknown);
+    }
+    for (let i = 0; i < version.length; i++) {
+      const c = version.charCodeAt(i);
+      if (c < 32 || c > 126) {
+        throw new Failure(NativeErrorCode.MalformedResponse, "Ping hostVersion is invalid.", Transport.Error, ServiceStatus.Unknown);
+      }
+    }
+    return version;
+  }
+
+  async function ensureRuntimeNativeHostVersion() {
+    if (pinnedNativeHostVersion || runtimeNativeHostVersion) return runtimeNativeHostVersion;
+    const requestId = newRequestId();
+    const outcome = await exchange({ protocolVersion: NATIVE_PROTOCOL_VERSION, requestId, command: "ping" });
+    if (outcome.transportError) {
+      throw new Failure(outcome.transportError, outcome.message, Transport.Error, ServiceStatus.Unknown);
+    }
+    const response = outcome.response;
+    const malformed = (message) => new Failure(NativeErrorCode.MalformedResponse, message, Transport.Error, ServiceStatus.Unknown);
+    if (!isPlainObject(response)) throw malformed("Ping response is not a JSON object.");
+    if (response.protocolVersion !== NATIVE_PROTOCOL_VERSION) {
+      throw new Failure(NativeErrorCode.UnsupportedProtocol, "Unsupported protocolVersion in ping response.", Transport.Error, ServiceStatus.Unknown);
+    }
+    if (response.ok !== true) throw malformed("Ping response was not successful.");
+    if (!hasExactKeys(response, ["protocolVersion", "requestId", "ok", "result"])) throw malformed("Unexpected ping envelope.");
+    if (response.requestId !== requestId) {
+      throw new Failure(NativeErrorCode.RequestIdMismatch, "Ping response requestId does not match.", Transport.Error, ServiceStatus.Unknown);
+    }
+    runtimeNativeHostVersion = readPingResult(response.result);
+    return runtimeNativeHostVersion;
+  }
 
   function exchange(request) {
     return new Promise((resolve) => {
@@ -213,8 +284,12 @@ export function createNativeStateProvider(deps) {
   }
 
   function readManifest(result) {
-    if (!isPlainObject(result) || !hasExactKeys(result, MANIFEST_FIELDS)) {
-      throw invalid(NativeErrorCode.InvalidManifest, "Manifest fields are invalid.");
+    const parsed = parseIntegrationManifest(result);
+    if (!parsed.ok) {
+      let code = NativeErrorCode.InvalidManifest;
+      if (parsed.code === IntegrationErrorCode.IntegrationApiIncompatible) code = NativeErrorCode.IntegrationApiIncompatible;
+      else if (parsed.code === IntegrationErrorCode.InvalidEndpoint) code = NativeErrorCode.InvalidEndpoint;
+      throw invalid(code, parsed.message);
     }
     if (result.schemaVersion !== 1) throw invalid(NativeErrorCode.InvalidManifest, "Unsupported manifest schemaVersion.");
     if (typeof result.stateGeneration !== "string" || !STATE_GENERATION.test(result.stateGeneration)) {
@@ -228,9 +303,21 @@ export function createNativeStateProvider(deps) {
     if (!Number.isSafeInteger(result.pageBudgetBytes) || result.pageBudgetBytes < 1 || result.pageBudgetBytes > SnapshotLimits.maxPageBudgetBytes) {
       throw invalid(NativeErrorCode.InvalidManifest, "Manifest pageBudgetBytes is invalid.");
     }
-    const proxy = validateBrowserProxy(result.browserProxy);
-    if (!proxy.ok) throw invalid(NativeErrorCode.InvalidEndpoint, "Manifest browserProxy is invalid: " + proxy.issues.map((i) => i.code + " " + i.path).join("; "));
-    return { ...result, browserProxy: proxy.browserProxy };
+    integrationSession.requiresBootstrap = false;
+    integrationSession.heartbeatEnabled = parsed.integration.browserClientHeartbeat;
+    return {
+      ...result,
+      browserProxy: parsed.browserProxy,
+      integration: parsed.integration
+    };
+  }
+
+  function manifestRequestFields() {
+    const fields = { command: "getStateManifest" };
+    if (!integrationSession.requiresBootstrap && integrationSession.heartbeatEnabled) {
+      fields.client = { extensionVersion, nativeHostVersion: heartbeatNativeHostVersion() };
+    }
+    return fields;
   }
 
   function readPage(session, manifest, startIndex, response) {
@@ -263,9 +350,15 @@ export function createNativeStateProvider(deps) {
     session.stats.largestPageBytes = 0;
     session.stats.totalBytes = 0;
 
-    const manifestResponse = await call(session, { command: "getStateManifest" });
+    const bootstrapManifest = integrationSession.requiresBootstrap;
+    const manifestResponse = await call(session, manifestRequestFields());
     const manifest = readManifest(manifestResponse.result);
     session.manifest = manifest;
+    session.integration = manifest.integration;
+
+    if (bootstrapManifest && integrationSession.heartbeatEnabled) {
+      await call(session, manifestRequestFields());
+    }
 
     const rules = [];
     let startIndex = 0;
@@ -295,8 +388,10 @@ export function createNativeStateProvider(deps) {
   }
 
   function readiness(manifest) {
-    if (!manifest) return ProxyReadiness.Unknown;
-    return manifest.browserProxy.status === "Ready" ? ProxyReadiness.Ready : ProxyReadiness.Unavailable;
+    if (!manifest || !manifest.integration) return ProxyReadiness.Unknown;
+    return effectiveBrowserProxyReadiness(manifest.browserProxy, manifest.integration) === "READY"
+      ? ProxyReadiness.Ready
+      : ProxyReadiness.Unavailable;
   }
 
   function identityOf(manifest) {
@@ -312,6 +407,7 @@ export function createNativeStateProvider(deps) {
     };
     let failure = null;
     try {
+      await ensureRuntimeNativeHostVersion();
       while (session.stats.attempts < SnapshotLimits.maxAttempts) {
         try {
           const snapshot = await attempt(session);
@@ -323,6 +419,8 @@ export function createNativeStateProvider(deps) {
             service: ServiceStatus.Available,
             state: StateStatus.Available,
             browserProxy: readiness(session.manifest),
+            integration: session.integration,
+            nativeHostVersion: heartbeatNativeHostVersion(),
             identity: snapshot.identity,
             stats: Object.freeze({ ...session.stats }),
             snapshot
@@ -339,6 +437,14 @@ export function createNativeStateProvider(deps) {
         ? error
         : new Failure(NativeErrorCode.ProviderException, error && error.message ? error.message : error, Transport.Error, ServiceStatus.Unknown);
     }
+    if (failure.transport === Transport.Error || failure.service === ServiceStatus.Unavailable) {
+      resetIntegrationSession();
+    }
+    if (failure.code === NativeErrorCode.IntegrationApiIncompatible ||
+      failure.code === NativeErrorCode.ManifestInvalid ||
+      failure.code === NativeErrorCode.InvalidManifest) {
+      resetIntegrationSession();
+    }
     return Object.freeze({
       ok: false,
       requestId: session.requestIds[0] || null,
@@ -347,6 +453,7 @@ export function createNativeStateProvider(deps) {
       service: failure.service,
       state: failure.state,
       browserProxy: readiness(session.manifest),
+      integration: session.integration || null,
       identity: identityOf(session.manifest),
       stats: Object.freeze({ ...session.stats }),
       error: Object.freeze({ code: failure.code, message: failure.message, hostErrorCode: failure.hostErrorCode })
@@ -357,6 +464,7 @@ export function createNativeStateProvider(deps) {
     kind: "Native",
     hostName: deps.hostName,
     protocolVersion: NATIVE_PROTOCOL_VERSION,
-    getSnapshot
+    getSnapshot,
+    resetIntegrationSession
   });
 }

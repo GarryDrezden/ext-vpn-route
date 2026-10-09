@@ -98,6 +98,20 @@ export const TEST_ENDPOINT = Object.freeze({ host: "127.0.0.1", port: 17891 });
 export const READY = Object.freeze({ status: "Ready", endpoint: TEST_ENDPOINT });
 export const UNAVAILABLE = Object.freeze({ status: "Unavailable", endpoint: null });
 
+/** Sorted like production Service capabilities for deterministic tests. */
+export const INTEGRATION_V1 = Object.freeze({
+  integrationApiVersion: 1,
+  serviceVersion: "0.1.0-test",
+  capabilities: Object.freeze([
+    "browserClientHeartbeat",
+    "browserExplicitSocks",
+    "browserRoutingState",
+    "vpnEgressReadiness"
+  ]),
+  vpnEgress: Object.freeze({ status: "Unavailable", interfaceIndex: null, interfaceName: null }),
+  browserClient: Object.freeze({ status: "NeverSeen", lastSeenUtc: null })
+});
+
 export function hostOk(message, result) {
   return { response: { protocolVersion: 1, requestId: message.requestId, ok: true, result } };
 }
@@ -114,9 +128,18 @@ export function nativeHostServing(state, options = {}) {
   const generation = options.generation || GEN_A;
   const browserProxy = options.browserProxy === undefined ? READY : options.browserProxy;
   const pageSize = options.pageSize || 2;
+  const hostVersion = options.hostVersion || "0.5.0-test";
   return (hostName, message) => {
-    if (message.command === "getStateManifest") {
+    if (message.command === "ping") {
       return hostOk(message, {
+        command: "pong",
+        host: "SelectiveVpnRouter.NativeHost",
+        protocolVersion: 1,
+        hostVersion
+      });
+    }
+    if (message.command === "getStateManifest") {
+      const manifest = {
         schemaVersion: state.schemaVersion,
         stateGeneration: generation,
         revision: state.revision,
@@ -124,7 +147,9 @@ export function nativeHostServing(state, options = {}) {
         ruleCount: state.rules.length,
         pageBudgetBytes: options.pageBudgetBytes || 520192,
         browserProxy: clone(browserProxy)
-      });
+      };
+      if (options.integration) Object.assign(manifest, clone(options.integration));
+      return hostOk(message, manifest);
     }
     if (message.command === "getStatePage") {
       if (message.stateGeneration !== generation || message.revision !== state.revision) return hostError(message, "snapshot_changed");
@@ -149,9 +174,19 @@ export function nativeHostReturning(state, browserProxy = READY, generation = GE
 }
 
 export function nativeHostFailing(code, message = "failure") {
-  return (hostName, request) => ({
-    response: { protocolVersion: 1, requestId: request.requestId, ok: false, error: { code, message } }
-  });
+  return (hostName, request) => {
+    if (request.command === "ping") {
+      return hostOk(request, {
+        command: "pong",
+        host: "SelectiveVpnRouter.NativeHost",
+        protocolVersion: 1,
+        hostVersion: "0.5.0-test"
+      });
+    }
+    return {
+      response: { protocolVersion: 1, requestId: request.requestId, ok: false, error: { code, message } }
+    };
+  };
 }
 
 export function routingState(revision, overrides = {}) {
@@ -177,4 +212,13 @@ let clock = 0;
 export function fakeNow() {
   clock++;
   return "2026-10-03T00:00:" + String(clock % 60).padStart(2, "0") + ".000Z";
+}
+
+/** Invoke every service-worker lifecycle listener (alarm setup + sync). */
+export function fireInstalled(runtime, detail = { reason: "install" }) {
+  for (const listener of runtime.onInstalled.listeners) listener(detail);
+}
+
+export function fireStartup(runtime) {
+  for (const listener of runtime.onStartup.listeners) listener();
 }

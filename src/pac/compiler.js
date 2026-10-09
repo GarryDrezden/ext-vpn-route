@@ -1,6 +1,7 @@
 import { MatchType, RouteMode } from "../domain/browser-routing/constants.js";
 import { hasOwn, isPlainObject, issue, pointer } from "../domain/browser-routing/issues.js";
 import { validateBrowserRoutingState } from "../domain/browser-routing/state.js";
+import { FAIL_CLOSED_BLOCKING_VR_VPN } from "./blocking.js";
 import { validateProxyEndpoint } from "./endpoint.js";
 import { jsStringLiteral } from "./literal.js";
 import { PAC_RUNTIME_SOURCE } from "./runtime.js";
@@ -17,7 +18,7 @@ export const OptionIssueCode = Object.freeze({
   UnknownOption: "unknown_option"
 });
 
-const OPTION_KEYS = Object.freeze(["proxyHost", "proxyPort"]);
+const OPTION_KEYS = Object.freeze(["proxyHost", "proxyPort", "failClosedBlocking"]);
 const ROUTE_CODE = Object.freeze({ VPN: 1, Direct: 0 });
 const SAFE_HOST = /^[a-z0-9_.-]+$/;
 const ASCII = /^[\u0000-\u007F]*$/;
@@ -47,8 +48,9 @@ export function compilePacScript(state, options) {
   }
 
   const canonical = validated.state;
+  const failClosedBlocking = optionCheck.failClosedBlocking === true;
   const endpoint = optionCheck.endpoint;
-  const proxyRoute = "SOCKS5 " + endpoint.host + ":" + endpoint.port;
+  const proxyRoute = failClosedBlocking ? FAIL_CLOSED_BLOCKING_VR_VPN : "SOCKS5 " + endpoint.host + ":" + endpoint.port;
 
   const exact = [];
   const domain = [];
@@ -88,7 +90,8 @@ export function compilePacScript(state, options) {
       schemaVersion: canonical.schemaVersion,
       revision: canonical.revision,
       defaultRoute: canonical.defaultRoute,
-      proxyEndpoint: endpoint,
+      failClosedBlocking,
+      proxyEndpoint: failClosedBlocking ? null : endpoint,
       proxyRoute,
       ruleCount: canonical.rules.length,
       enabledRuleCount: exact.length + domain.length,
@@ -109,6 +112,14 @@ function validateOptions(options) {
       issues.push(issue(OptionIssueCode.UnknownOption, pointer("", key), "Unknown compiler option."));
     }
   }
+  if (options.failClosedBlocking === true) {
+    return {
+      ok: issues.length === 0,
+      failClosedBlocking: true,
+      endpoint: null,
+      issues: Object.freeze(issues)
+    };
+  }
   const endpoint = validateProxyEndpoint(
     {
       host: hasOwn(options, "proxyHost") ? options.proxyHost : undefined,
@@ -116,7 +127,7 @@ function validateOptions(options) {
     },
     { host: "/proxyHost", port: "/proxyPort" });
   issues.push(...endpoint.issues);
-  return { ok: issues.length === 0, endpoint: endpoint.endpoint, issues };
+  return { ok: issues.length === 0, failClosedBlocking: false, endpoint: endpoint.endpoint, issues };
 }
 
 function routeEntry(prefix, entry) {

@@ -23,6 +23,15 @@ function renderNative(source) {
   show("native-service", source.service, toneFor(source.service));
   show("native-state", source.state, toneFor(source.state));
   show("native-browser-proxy", source.browserProxy, source.browserProxy === "READY" ? "ok" : toneFor(source.browserProxy));
+  const integration = source.integration;
+  show("native-integration-api", integration
+    ? (integration.integrationApiVersion === null
+      ? "legacy Phase 5"
+      : "v" + integration.integrationApiVersion + (integration.serviceVersion ? " (" + integration.serviceVersion + ")" : ""))
+    : null, integration && integration.integrationApiVersion === 1 ? "ok" : "warn");
+  show("native-vpn-egress", integration && integration.vpnEgress
+    ? integration.vpnEgress.status + (integration.vpnEgress.interfaceIndex !== null ? " #" + integration.vpnEgress.interfaceIndex : "")
+    : null, integration && integration.vpnEgress && integration.vpnEgress.status === "Ready" ? "ok" : "warn");
   const f = source.lastFetch;
   show("native-last-fetch", f
     ? f.result + (f.errorCode ? " (" + (f.hostErrorCode || f.errorCode) + ")" : "") + " at " + f.at
