@@ -4,6 +4,7 @@
   "serviceVersion": "0.0.0-example",
   "capabilities": [
     "browserRoutingState",
+    "browserRoutingWrite",
     "browserExplicitSocks",
     "vpnEgressReadiness",
     "browserClientHeartbeat"

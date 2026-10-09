@@ -125,7 +125,7 @@ Int32 LE длина (1..max) + UTF-8 JSON
 |---|---|
 | `integrationApiVersion` | Целое **major only** (сейчас `1`). Minor/additive — через `capabilities`, не через `1.1`. |
 | `serviceVersion` | Информативно; **не** compat gate. |
-| `capabilities` | Минимум v1 runtime: `browserRoutingState`, `browserExplicitSocks`, `vpnEgressReadiness`, `browserClientHeartbeat`. Будущее: `browserRuleWrite`, `browserDiagnostics`, `browserTrafficStats`. |
+| `capabilities` | Минимум v1 runtime: `browserRoutingState`, `browserExplicitSocks`, `vpnEgressReadiness`, `browserClientHeartbeat`. Write (Slice 9A+): `browserRoutingWrite`. Будущее: `browserDiagnostics`, `browserTrafficStats`. |
 | `vpnEgress` | `{ status: Ready\|Unavailable, interfaceIndex?, interfaceName? }` — authoritative RouterEngine tunnel state. |
 | `browserClient` | Last-contact telemetry: `NeverSeen` \| `RecentlySeen` \| `Stale`, `lastSeenUtc` (in-memory). **Не** live connection state. TTL `RecentlySeen` → `Stale`: **120 s** since `lastSeenUtc`. |
 
@@ -175,6 +175,18 @@ Int32 LE длина (1..max) + UTF-8 JSON
 | `MaxPagesPerSnapshot` | 160 |
 
 512 KiB ответа Service + конверт Native Messaging заведомо меньше лимита Chromium 1 MiB на сообщение host → browser. Ни обрезки, ни сжатия, ни снижения лимита 10000 нет.
+
+## Write methods (Slice 9A Service, Slice 9B extension transport)
+
+Требуют capability `browserRoutingWrite` на стороне extension; Service без store write отвечает `unknown_method`.
+
+| method | params | success `result` | errors |
+|---|---|---|---|
+| `upsertRule` | `expectedRevision`, `rule` | `{stateGeneration, revision, defaultRoute, ruleCount}` | `revision_conflict` (+ `currentRevision`), `validation_failed`, `persistence_failed`, … |
+| `deleteRule` | `expectedRevision`, `id` | то же | + `not_found` |
+| `resetRules` | `expectedRevision` | то же | idempotent empty Direct без bump revision |
+
+`stateGeneration` на успешной мутации не меняется; `revision` → N+1 (кроме idempotent reset). Native host пересылает коды ошибок без flattening. Extension writer не ретраит конфликты и не replay-ит мутации после transport failure.
 
 ## Хранение state в Service
 

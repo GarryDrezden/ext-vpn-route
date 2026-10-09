@@ -42,11 +42,15 @@ internal static class ServiceIpcV1
     {
         public const string GetManifest = "getManifest";
         public const string GetPage = "getPage";
+        public const string UpsertRule = "upsertRule";
+        public const string DeleteRule = "deleteRule";
+        public const string ResetRules = "resetRules";
     }
 
     /// <summary>Service error codes forwarded to the extension as-is; any other code becomes service_error.</summary>
     public static readonly IReadOnlySet<string> ForwardedErrors = new HashSet<string>(StringComparer.Ordinal)
     {
-        "browser_state_unavailable", "snapshot_changed", "invalid_cursor"
+        "browser_state_unavailable", "snapshot_changed", "invalid_cursor",
+        "invalid_request", "revision_conflict", "validation_failed", "not_found", "persistence_failed"
     };
 }

@@ -20,6 +20,9 @@ internal static class ProtocolV1
         public const string Ping = "ping";
         public const string GetStateManifest = "getStateManifest";
         public const string GetStatePage = "getStatePage";
+        public const string UpsertRule = "upsertRule";
+        public const string DeleteRule = "deleteRule";
+        public const string ResetRules = "resetRules";
     }
 
     public static class Errors

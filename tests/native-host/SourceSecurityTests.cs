@@ -68,13 +68,13 @@ public class SourceSecurityTests
     public void ServiceSurface_IsTheFixedReadOnlyAllowlist()
     {
         var methods = typeof(VpnRoute.NativeHost.Service.IServiceStateClient).GetMethods().Select(m => m.Name).Order().ToArray();
-        Assert.Equal(["GetManifestAsync", "GetPageAsync"], methods);
+        Assert.Equal(["DeleteRuleAsync", "GetManifestAsync", "GetPageAsync", "ResetRulesAsync", "UpsertRuleAsync"], methods);
 
         var serviceMethods = typeof(VpnRoute.NativeHost.Service.ServiceIpcV1.Methods).GetFields().Select(f => (string)f.GetValue(null)!).Order();
-        Assert.Equal(["getManifest", "getPage"], serviceMethods);
+        Assert.Equal(["deleteRule", "getManifest", "getPage", "resetRules", "upsertRule"], serviceMethods);
 
         var commands = typeof(VpnRoute.NativeHost.Protocol.ProtocolV1.Commands).GetFields().Select(f => (string)f.GetValue(null)!).Order();
-        Assert.Equal(["getStateManifest", "getStatePage", "ping"], commands);
+        Assert.Equal(["deleteRule", "getStateManifest", "getStatePage", "ping", "resetRules", "upsertRule"], commands);
 
         Assert.Equal("SelectiveVpnRouter.BrowserRouting", VpnRoute.NativeHost.Service.ServiceIpcV1.PipeName);
         var client = File.ReadAllText(Path.Combine(HostDirectory, "Service", "BrowserRoutingPipeClient.cs"));

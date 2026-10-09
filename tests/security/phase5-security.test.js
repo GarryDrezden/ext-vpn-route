@@ -44,19 +44,20 @@ test("Service browser pipe ACL: no Everyone / Authenticated Users / Users, Netwo
   assert.match(server, /PipeOptions\.FirstPipeInstance/);
 });
 
-test("Service browser endpoint exposes exactly getManifest and getPage; no admin or service-control methods", (t) => {
+test("Service browser endpoint uses a fixed method allowlist; no admin or service-control methods", (t) => {
   const protocol = gateway(t, "src/SelectiveVpnRouter.Core/BrowserRouting/BrowserRoutingIpcProtocol.cs");
   if (protocol === null) return;
   const block = /static class Methods\s*\{([^}]*)\}/.exec(protocol);
   assert.ok(block, "Methods block");
   const methods = [...block[1].matchAll(/const string \w+ = "(\w+)";/g)].map((m) => m[1]);
-  assert.deepEqual(methods.sort(), ["getManifest", "getPage"]);
+  assert.deepEqual(methods.sort(), ["deleteRule", "getManifest", "getPage", "resetRules", "upsertRule"]);
   for (const forbidden of ["SetConfig", "ConnectVpn", "DisconnectVpn", "EmergencyRestore", "RunDiagnostic", "Shutdown", "Upsert", "Delete"]) {
     assert.equal(protocol.includes("\"" + forbidden), false, forbidden);
   }
   const host = read("src/native-host/Service/ServiceIpcV1.cs");
   assert.match(host, /GetManifest = "getManifest"/);
   assert.match(host, /GetPage = "getPage"/);
+  assert.match(host, /UpsertRule = "upsertRule"/);
   assert.equal(/"(SetConfig|ConnectVpn|EmergencyRestore|GetStatus)"/.test(host), false);
 });
 

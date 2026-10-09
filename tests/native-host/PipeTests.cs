@@ -51,6 +51,29 @@ public class PipeTests
         Assert.Equal("snapshot_changed", reply.ErrorCode);
     }
 
+    [Fact]
+    public async Task Client_PreservesRevisionConflictCurrentRevision()
+    {
+        await using var server = new FakeServicePipe(Answer(id => FakeServicePipe.Error(id, "revision_conflict", 44)));
+        var reply = await new BrowserRoutingPipeClient(server.Name).ResetRulesAsync("w-1", 43, CancellationToken.None);
+        Assert.Equal("revision_conflict", reply.ErrorCode);
+        Assert.Equal(44L, reply.ErrorCurrentRevision);
+    }
+
+    [Fact]
+    public async Task Client_SendsUpsertRuleServiceRequest()
+    {
+        await using var server = new FakeServicePipe(request =>
+        {
+            var id = FakeServicePipe.RequestId(request);
+            return Task.FromResult<byte[]?>(FakeServicePipe.Frame(FakeServicePipe.Ok(id, SampleService.WriteResult(44))));
+        });
+        var rule = JsonDocument.Parse(SampleService.Rule(1)).RootElement;
+        await new BrowserRoutingPipeClient(server.Name).UpsertRuleAsync("u-1", 43, rule, CancellationToken.None);
+        Assert.Contains("\"method\":\"upsertRule\"", Encoding.UTF8.GetString(server.Requests[0]));
+        Assert.Contains("\"expectedRevision\":43", Encoding.UTF8.GetString(server.Requests[0]));
+    }
+
     public static TheoryData<string> BrokenResponses => new() { "garbage", "early-eof", "huge-header", "zero-length", "partial-body", "wrong-id" };
 
     [Theory]

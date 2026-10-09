@@ -31,6 +31,27 @@ internal sealed class BrowserRoutingPipeClient(string? pipeName = ServiceIpcV1.P
             writer.WriteNumber("startIndex", startIndex);
         }), cancellationToken);
 
+    public Task<ServiceReply> UpsertRuleAsync(string correlationId, long expectedRevision, JsonElement rule, CancellationToken cancellationToken) =>
+        SendAsync(correlationId, BuildRequest(correlationId, ServiceIpcV1.Methods.UpsertRule, writer =>
+        {
+            writer.WriteNumber("expectedRevision", expectedRevision);
+            writer.WritePropertyName("rule");
+            rule.WriteTo(writer);
+        }), cancellationToken);
+
+    public Task<ServiceReply> DeleteRuleAsync(string correlationId, long expectedRevision, string ruleId, CancellationToken cancellationToken) =>
+        SendAsync(correlationId, BuildRequest(correlationId, ServiceIpcV1.Methods.DeleteRule, writer =>
+        {
+            writer.WriteNumber("expectedRevision", expectedRevision);
+            writer.WriteString("id", ruleId);
+        }), cancellationToken);
+
+    public Task<ServiceReply> ResetRulesAsync(string correlationId, long expectedRevision, CancellationToken cancellationToken) =>
+        SendAsync(correlationId, BuildRequest(correlationId, ServiceIpcV1.Methods.ResetRules, writer =>
+        {
+            writer.WriteNumber("expectedRevision", expectedRevision);
+        }), cancellationToken);
+
     private async Task<ServiceReply> SendAsync(string correlationId, byte[] request, CancellationToken cancellationToken)
     {
         if (pipeName is null)
@@ -118,10 +139,23 @@ internal sealed class BrowserRoutingPipeClient(string? pipeName = ServiceIpcV1.P
             if (!(id.ValueKind == JsonValueKind.Null || (id.ValueKind == JsonValueKind.String && id.GetString() == correlationId)))
                 throw new InvalidServiceResponseException();
             if (!root.TryGetProperty("error", out var error) || error.ValueKind != JsonValueKind.Object ||
-                !error.TryGetProperty("code", out var code) || code.ValueKind != JsonValueKind.String ||
-                error.EnumerateObject().Count() != 1)
+                !error.TryGetProperty("code", out var code) || code.ValueKind != JsonValueKind.String)
                 throw new InvalidServiceResponseException();
-            return ServiceReply.Failure(code.GetString()!);
+            long? currentRevision = null;
+            foreach (var property in error.EnumerateObject())
+            {
+                if (property.NameEquals("code"))
+                    continue;
+                if (property.NameEquals("currentRevision"))
+                {
+                    if (property.Value.ValueKind != JsonValueKind.Number || !property.Value.TryGetInt64(out var rev))
+                        throw new InvalidServiceResponseException();
+                    currentRevision = rev;
+                    continue;
+                }
+                throw new InvalidServiceResponseException();
+            }
+            return ServiceReply.Failure(code.GetString()!, currentRevision);
         }
         catch (JsonException)
         {

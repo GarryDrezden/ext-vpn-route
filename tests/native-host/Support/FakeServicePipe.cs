@@ -47,7 +47,10 @@ internal sealed class FakeServicePipe : IAsyncDisposable
 
     public static string Ok(string id, string result) => $$"""{"version":1,"id":"{{id}}","ok":true,"result":{{result}}}""";
 
-    public static string Error(string id, string code) => $$$"""{"version":1,"id":"{{{id}}}","ok":false,"error":{"code":"{{{code}}}"}}""";
+    public static string Error(string id, string code, long? currentRevision = null) =>
+        currentRevision is null
+            ? $$$"""{"version":1,"id":"{{{id}}}","ok":false,"error":{"code":"{{{code}}}"}}"""
+            : $$$"""{"version":1,"id":"{{{id}}}","ok":false,"error":{"code":"{{{code}}}","currentRevision":{{{currentRevision}}}}}""";
 
     public static string RequestId(byte[] request)
     {

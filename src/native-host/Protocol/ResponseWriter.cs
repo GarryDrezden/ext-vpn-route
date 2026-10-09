@@ -24,7 +24,11 @@ internal static class ResponseWriter
         [ProtocolV1.Errors.SnapshotChanged] = "Browser routing state changed; restart the snapshot.",
         [ProtocolV1.Errors.InvalidCursor] = "State page cursor is out of range.",
         [ProtocolV1.Errors.ResponseTooLarge] = "Response exceeds the native messaging size limit.",
-        [ProtocolV1.Errors.InternalError] = "Native host internal error."
+        [ProtocolV1.Errors.InternalError] = "Native host internal error.",
+        ["revision_conflict"] = "Browser routing revision does not match the Service.",
+        ["validation_failed"] = "Browser routing rule failed Service validation.",
+        ["not_found"] = "Browser routing rule was not found.",
+        ["persistence_failed"] = "Browser routing state could not be persisted."
     };
 
     public static byte[] Success(string requestId, Action<Utf8JsonWriter> writeResult)
@@ -41,7 +45,7 @@ internal static class ResponseWriter
     public static byte[] SuccessRaw(string requestId, byte[] rawResult) =>
         Success(requestId, writer => writer.WriteRawValue(rawResult, skipInputValidation: false));
 
-    public static byte[] Error(string? requestId, string code)
+    public static byte[] Error(string? requestId, string code, long? currentRevision = null)
     {
         if (!ErrorMessages.TryGetValue(code, out var message))
             throw new ArgumentOutOfRangeException(nameof(code));
@@ -52,6 +56,8 @@ internal static class ResponseWriter
             writer.WriteStartObject("error");
             writer.WriteString("code", code);
             writer.WriteString("message", message);
+            if (currentRevision is not null)
+                writer.WriteNumber("currentRevision", currentRevision.Value);
             writer.WriteEndObject();
         });
     }

@@ -66,8 +66,6 @@ public class SecurityTests
     [InlineData("shell")]
     [InlineData("readFile")]
     [InlineData("setState")]
-    [InlineData("upsertRule")]
-    [InlineData("deleteRule")]
     [InlineData("PING")]
     [InlineData("getstate")]
     [InlineData("getState")]

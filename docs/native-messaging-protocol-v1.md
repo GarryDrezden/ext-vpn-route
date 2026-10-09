@@ -88,7 +88,11 @@ SelectiveVpnRouter.NativeHost.exe chrome-extension://<id>/ --parent-window=<hwnd
 | `malformed_json` | не UTF-8 или не JSON |
 | `invalid_request` | конверт или параметры не по схеме |
 | `unsupported_protocol_version` | `protocolVersion` ≠ 1 |
-| `unknown_command` | команда не `ping` / `getStateManifest` / `getStatePage` |
+| `unknown_command` | команда не из allowlist ниже |
+| `revision_conflict` | Service: `expectedRevision` не совпал (переслан с optional `currentRevision`) |
+| `validation_failed` | Service отклонил rule |
+| `not_found` | Service: rule id отсутствует |
+| `persistence_failed` | Service не смог сохранить state |
 | `forbidden_origin` | проверка argv не прошла |
 | `service_unavailable` | pipe Service не открылся за 1 s, или test pipe override отвергнут |
 | `service_untrusted` | владелец pipe не SYSTEM, не Administrators и не текущий пользователь |
@@ -101,7 +105,9 @@ SelectiveVpnRouter.NativeHost.exe chrome-extension://<id>/ --parent-window=<hwnd
 | `response_too_large` | ответ > 1 MiB |
 | `internal_error` | зарезервирован |
 
-Из Service host пересылает только `browser_state_unavailable`, `snapshot_changed` и `invalid_cursor`. Любой другой код Service превращается в `service_error`.
+Из Service host пересылает: `browser_state_unavailable`, `snapshot_changed`, `invalid_cursor`, `invalid_request`, `revision_conflict` (с optional `currentRevision` в `error`), `validation_failed`, `not_found`, `persistence_failed`. Любой другой код Service превращается в `service_error`.
+
+Write-ответы и write-ошибки host **не** ретраит и **не** переигрывает после обрыва pipe: один native запрос — одна попытка Service IPC. При `service_unavailable` / `service_timeout` исход мутации неизвестен; клиент обязан перечитать state перед повтором.
 
 Обрезанный заголовок или payload: ответа нет, выход с кодом 3. Чистый EOF: выход 0.
 
@@ -114,6 +120,9 @@ Host — тупой bridge. Каждая команда отображается
 | `ping` | — (к Service не обращается) |
 | `getStateManifest` | `getManifest` |
 | `getStatePage` | `getPage {stateGeneration, revision, startIndex}` |
+| `upsertRule` | `upsertRule {expectedRevision, rule}` |
+| `deleteRule` | `deleteRule {expectedRevision, id}` |
+| `resetRules` | `resetRules {expectedRevision}` |
 
 ### `ping`
 
@@ -155,6 +164,18 @@ Host проверяет:
 - `nextIndex` согласован с `startIndex + rules.length`.
 
 Правила host не валидирует: это делает extension на собранном state.
+
+### Write commands (Slice 9B, capability `browserRoutingWrite`)
+
+Extension: `createBrowserRoutingWriter()` (`extension/state/browser-routing-writer.js`). Перед вызовом — проверка capability в Integration manifest; без неё `unsupported_capability`, к host не обращается.
+
+| Native command | Поля запроса | Service `result` |
+|---|---|---|
+| `upsertRule` | `expectedRevision`, `rule` (object v1) | `{stateGeneration, revision, defaultRoute, ruleCount}` |
+| `deleteRule` | `expectedRevision`, `id` | то же |
+| `resetRules` | `expectedRevision` | то же |
+
+Host проверяет форму конверта и пересылает payload в Service без business-валидации. Успешная мутация **не** обновляет PAC сама: caller вызывает обычный `coordinator.sync()` / `getSnapshot()` (см. `syncAfterBrowserRoutingWrite`). Конфликты revision клиент разрешает явно; auto-retry запрещён.
 
 ## Проверки на стороне extension
 

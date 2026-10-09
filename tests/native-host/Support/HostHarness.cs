@@ -12,11 +12,21 @@ internal sealed class RecordingLog : IHostLog
     public void Info(string message) => Lines.Add(message);
 }
 
-internal sealed record ServiceCall(string CorrelationId, SnapshotIdentity? Identity, int? StartIndex);
+internal sealed record ServiceCall(
+    string CorrelationId,
+    SnapshotIdentity? Identity,
+    int? StartIndex,
+    string? WriteMethod = null,
+    long? ExpectedRevision = null,
+    JsonElement? Rule = null,
+    string? RuleId = null);
 
 internal sealed class FakeServiceClient(
     Func<CancellationToken, Task<ServiceReply>> manifest,
-    Func<SnapshotIdentity, int, CancellationToken, Task<ServiceReply>> page) : IServiceStateClient
+    Func<SnapshotIdentity, int, CancellationToken, Task<ServiceReply>> page,
+    Func<long, JsonElement, CancellationToken, Task<ServiceReply>>? upsert = null,
+    Func<long, string, CancellationToken, Task<ServiceReply>>? delete = null,
+    Func<long, CancellationToken, Task<ServiceReply>>? reset = null) : IServiceStateClient
 {
     public List<ServiceCall> Requests { get; } = [];
     public int Calls => Requests.Count;
@@ -36,8 +46,42 @@ internal sealed class FakeServiceClient(
         return page(identity, startIndex, cancellationToken);
     }
 
+    public Task<ServiceReply> UpsertRuleAsync(string correlationId, long expectedRevision, JsonElement rule, CancellationToken cancellationToken)
+    {
+        Requests.Add(new(correlationId, null, null, ServiceIpcV1.Methods.UpsertRule, expectedRevision, rule, null));
+        if (upsert is null)
+            throw new InvalidOperationException("Upsert handler was not configured.");
+        return upsert(expectedRevision, rule, cancellationToken);
+    }
+
+    public Task<ServiceReply> DeleteRuleAsync(string correlationId, long expectedRevision, string ruleId, CancellationToken cancellationToken)
+    {
+        Requests.Add(new(correlationId, null, null, ServiceIpcV1.Methods.DeleteRule, expectedRevision, null, ruleId));
+        if (delete is null)
+            throw new InvalidOperationException("Delete handler was not configured.");
+        return delete(expectedRevision, ruleId, cancellationToken);
+    }
+
+    public Task<ServiceReply> ResetRulesAsync(string correlationId, long expectedRevision, CancellationToken cancellationToken)
+    {
+        Requests.Add(new(correlationId, null, null, ServiceIpcV1.Methods.ResetRules, expectedRevision));
+        if (reset is null)
+            throw new InvalidOperationException("Reset handler was not configured.");
+        return reset(expectedRevision, cancellationToken);
+    }
+
     public static FakeServiceClient Returning(ServiceReply manifest, Func<SnapshotIdentity, int, ServiceReply>? page = null) =>
         new(_ => Task.FromResult(manifest), (id, start, _) => Task.FromResult(page is null ? SampleService.PageReply(id, start) : page(id, start)));
+
+    public static FakeServiceClient WithWrites(
+        ServiceReply manifest,
+        Func<long, JsonElement, ServiceReply>? upsert = null,
+        Func<long, string, ServiceReply>? delete = null,
+        Func<long, ServiceReply>? reset = null) =>
+        new(_ => Task.FromResult(manifest), (id, start, _) => Task.FromResult(SampleService.PageReply(id, start)),
+            upsert is null ? null : (rev, rule, _) => Task.FromResult(upsert(rev, rule)),
+            delete is null ? null : (rev, ruleId, _) => Task.FromResult(delete(rev, ruleId)),
+            reset is null ? null : (rev, _) => Task.FromResult(reset(rev)));
 
     public static FakeServiceClient Throwing(Exception exception) =>
         new(_ => Task.FromException<ServiceReply>(exception), (_, _, _) => Task.FromException<ServiceReply>(exception));
@@ -93,4 +137,10 @@ internal static class SampleService
 
     public static string PageRequest(int startIndex = 0, string requestId = "page-1", string generation = Generation, long revision = Revision) =>
         JsonSerializer.Serialize(new { protocolVersion = 1, requestId, command = "getStatePage", stateGeneration = generation, revision, startIndex });
+
+    public static string WriteResult(long revision = Revision, string generation = Generation, int ruleCount = 1) =>
+        $$"""{"stateGeneration":"{{generation}}","revision":{{revision}},"defaultRoute":"Direct","ruleCount":{{ruleCount}}}""";
+
+    public static ServiceReply WriteReply(long revision = Revision, int ruleCount = 1) =>
+        ServiceReply.Success(Encoding.UTF8.GetBytes(WriteResult(revision, ruleCount: ruleCount)));
 }

@@ -37,7 +37,28 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
 
     private static readonly HashSet<string> RequestFieldAllowlist = new(StringComparer.Ordinal)
     {
-        "protocolVersion", "requestId", "command", "client", "stateGeneration", "revision", "startIndex"
+        "protocolVersion", "requestId", "command", "client", "stateGeneration", "revision", "startIndex",
+        "expectedRevision", "rule", "id"
+    };
+
+    private static readonly HashSet<string> UpsertFields = new(StringComparer.Ordinal)
+    {
+        "protocolVersion", "requestId", "command", "expectedRevision", "rule"
+    };
+
+    private static readonly HashSet<string> DeleteFields = new(StringComparer.Ordinal)
+    {
+        "protocolVersion", "requestId", "command", "expectedRevision", "id"
+    };
+
+    private static readonly HashSet<string> ResetFields = new(StringComparer.Ordinal)
+    {
+        "protocolVersion", "requestId", "command", "expectedRevision"
+    };
+
+    private static readonly HashSet<string> RuleFields = new(StringComparer.Ordinal)
+    {
+        "id", "name", "host", "matchType", "routeMode", "enabled", "source", "notes"
     };
 
     private static readonly HashSet<string> ManifestOptionalFields = new(StringComparer.Ordinal)
@@ -48,6 +69,7 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
     private static readonly string[] ManifestRequiredFields =
         ["schemaVersion", "stateGeneration", "revision", "defaultRoute", "ruleCount", "pageBudgetBytes", "browserProxy"];
     private static readonly string[] PageResultFields = ["stateGeneration", "revision", "startIndex", "nextIndex", "rules"];
+    private static readonly string[] WriteResultFields = ["stateGeneration", "revision", "defaultRoute", "ruleCount"];
 
     public async Task<DispatchResult> DispatchAsync(byte[] payload, CancellationToken cancellationToken)
     {
@@ -94,6 +116,9 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
                 ProtocolV1.Commands.Ping => Ping(requestId),
                 ProtocolV1.Commands.GetStateManifest => await ManifestAsync(requestId, root, cancellationToken).ConfigureAwait(false),
                 ProtocolV1.Commands.GetStatePage => await PageAsync(requestId, root, cancellationToken).ConfigureAwait(false),
+                ProtocolV1.Commands.UpsertRule => await UpsertRuleAsync(requestId, root, cancellationToken).ConfigureAwait(false),
+                ProtocolV1.Commands.DeleteRule => await DeleteRuleAsync(requestId, root, cancellationToken).ConfigureAwait(false),
+                ProtocolV1.Commands.ResetRules => await ResetRulesAsync(requestId, root, cancellationToken).ConfigureAwait(false),
                 _ => Fail(requestId, "unknown", ProtocolV1.Errors.UnknownCommand)
             };
         }
@@ -138,6 +163,66 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         if (call.Failure is { } failure)
             return failure;
         return IsValidManifest(call.Result!)
+            ? Relay(requestId, command, call.Result!)
+            : Fail(requestId, command, ProtocolV1.Errors.InvalidServiceResponse);
+    }
+
+    private async Task<DispatchResult> UpsertRuleAsync(string requestId, JsonElement root, CancellationToken cancellationToken)
+    {
+        const string command = ProtocolV1.Commands.UpsertRule;
+        if (!HasExactFields(root, UpsertFields))
+            return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+        if (!TryReadInteger(root.GetProperty("expectedRevision"), ProtocolV1.MaxRevision, out var expectedRevision))
+            return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+        var rule = root.GetProperty("rule");
+        if (rule.ValueKind != JsonValueKind.Object || !HasOnlyFields(rule, RuleFields))
+            return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+
+        var call = await CallAsync(requestId, command,
+            token => serviceClient.UpsertRuleAsync(requestId, expectedRevision, rule, token), cancellationToken).ConfigureAwait(false);
+        if (call.Failure is { } failure)
+            return failure;
+        return IsValidWriteResult(call.Result!)
+            ? Relay(requestId, command, call.Result!)
+            : Fail(requestId, command, ProtocolV1.Errors.InvalidServiceResponse);
+    }
+
+    private async Task<DispatchResult> DeleteRuleAsync(string requestId, JsonElement root, CancellationToken cancellationToken)
+    {
+        const string command = ProtocolV1.Commands.DeleteRule;
+        if (!HasExactFields(root, DeleteFields))
+            return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+        if (!TryReadInteger(root.GetProperty("expectedRevision"), ProtocolV1.MaxRevision, out var expectedRevision))
+            return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+        var idElement = root.GetProperty("id");
+        if (idElement.ValueKind != JsonValueKind.String)
+            return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+        var ruleId = idElement.GetString();
+        if (string.IsNullOrEmpty(ruleId) || ruleId.Length > 128)
+            return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+
+        var call = await CallAsync(requestId, command,
+            token => serviceClient.DeleteRuleAsync(requestId, expectedRevision, ruleId, token), cancellationToken).ConfigureAwait(false);
+        if (call.Failure is { } failure)
+            return failure;
+        return IsValidWriteResult(call.Result!)
+            ? Relay(requestId, command, call.Result!)
+            : Fail(requestId, command, ProtocolV1.Errors.InvalidServiceResponse);
+    }
+
+    private async Task<DispatchResult> ResetRulesAsync(string requestId, JsonElement root, CancellationToken cancellationToken)
+    {
+        const string command = ProtocolV1.Commands.ResetRules;
+        if (!HasExactFields(root, ResetFields))
+            return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+        if (!TryReadInteger(root.GetProperty("expectedRevision"), ProtocolV1.MaxRevision, out var expectedRevision))
+            return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
+
+        var call = await CallAsync(requestId, command,
+            token => serviceClient.ResetRulesAsync(requestId, expectedRevision, token), cancellationToken).ConfigureAwait(false);
+        if (call.Failure is { } failure)
+            return failure;
+        return IsValidWriteResult(call.Result!)
             ? Relay(requestId, command, call.Result!)
             : Fail(requestId, command, ProtocolV1.Errors.InvalidServiceResponse);
     }
@@ -202,7 +287,8 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         if (reply.ErrorCode is { } code)
         {
             var forwarded = ServiceIpcV1.ForwardedErrors.Contains(code) ? code : ProtocolV1.Errors.ServiceError;
-            return new(null, Fail(requestId, command, forwarded, forwarded == code ? null : "service code"));
+            var details = forwarded == code ? reply.ErrorCurrentRevision : null;
+            return new(null, Fail(requestId, command, forwarded, forwarded == code ? null : "service code", details));
         }
         if (reply.Result is null || reply.Result.Length > ServiceIpcV1.MaxResponseBytes)
             return new(null, Fail(requestId, command, ProtocolV1.Errors.InvalidServiceResponse));
@@ -254,6 +340,25 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         };
     }
 
+    private static bool IsValidWriteResult(byte[] result)
+    {
+        using var document = ParseResult(result);
+        if (document is null)
+            return false;
+        var root = document.RootElement;
+        if (!HasExactFields(root, WriteResultFields))
+            return false;
+        if (root.GetProperty("stateGeneration") is not { ValueKind: JsonValueKind.String } generation ||
+            !IsGeneration(generation.GetString()))
+            return false;
+        if (!TryReadInteger(root.GetProperty("revision"), ProtocolV1.MaxRevision, out _) ||
+            !TryReadInteger(root.GetProperty("ruleCount"), ProtocolV1.MaxRules, out _))
+            return false;
+        var defaultRoute = root.GetProperty("defaultRoute");
+        return defaultRoute.ValueKind == JsonValueKind.String &&
+            defaultRoute.GetString() is "Direct" or "VPN";
+    }
+
     private static bool IsValidPage(byte[] result, SnapshotIdentity identity, int startIndex)
     {
         using var document = ParseResult(result);
@@ -293,8 +398,8 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         }
     }
 
-    private static DispatchResult Fail(string? requestId, string command, string code, string? detail = null) =>
-        new(ResponseWriter.Error(requestId, code), command, detail is null ? code : $"{code} ({detail})");
+    private static DispatchResult Fail(string? requestId, string command, string code, string? detail = null, long? currentRevision = null) =>
+        new(ResponseWriter.Error(requestId, code, currentRevision), command, detail is null ? code : $"{code} ({detail})");
 
     private static bool HasOnlyFields(JsonElement root, HashSet<string> allowed)
     {

@@ -37,10 +37,13 @@ export const MODES = Object.freeze(["fixture", "native"]);
 export const NATIVE_HOST_NAME = "com.vpnroute.browser";
 
 const NATIVE_ONLY_FILES = Object.freeze([
-  "state/source-native.js", "state/native-state-provider.js"
+  "state/source-native.js", "state/native-state-provider.js", "state/browser-routing-writer.js"
 ]);
 const FIXTURE_ONLY_FILES = Object.freeze(["state/smoke-state.js", "state/source.js"]);
-const NATIVE_MESSAGING_FILE = "extension/state/native-state-provider.js";
+const NATIVE_MESSAGING_FILES = Object.freeze([
+  "extension/state/native-state-provider.js",
+  "extension/state/browser-routing-writer.js"
+]);
 
 const SOURCES = Object.freeze({
   fixture: Object.freeze([
@@ -202,7 +205,7 @@ function insideRoot(root, target) {
 export async function validateExtension(outDir, options = {}) {
   const problems = [];
   const files = walk(outDir);
-  const mode = options.expectMode || (files.includes(NATIVE_MESSAGING_FILE) ? "native" : "fixture");
+  const mode = options.expectMode || (files.some((f) => NATIVE_MESSAGING_FILES.includes(f)) ? "native" : "fixture");
   if (!MODES.includes(mode)) throw new Error("Unknown mode " + mode);
 
   const mustBeAbsent = mode === "native"
@@ -272,8 +275,8 @@ export async function validateExtension(outDir, options = {}) {
       if (label === "chrome.alarms polling" && ALARMS_ALLOWED_FILES.includes(file)) continue;
       if (pattern.test(source)) problems.push(file + ": forbidden " + label);
     }
-    if (NATIVE_MESSAGING_CODE.test(source) && !(mode === "native" && file === NATIVE_MESSAGING_FILE)) {
-      problems.push(file + ": native messaging is allowed only in " + NATIVE_MESSAGING_FILE + " of a native build");
+    if (NATIVE_MESSAGING_CODE.test(source) && !(mode === "native" && NATIVE_MESSAGING_FILES.includes(file))) {
+      problems.push(file + ": native messaging is allowed only in " + NATIVE_MESSAGING_FILES.join(" or ") + " of a native build");
     }
     if (mode === "native" && /smoke-state/.test(source)) problems.push(file + ": native build references the fixture");
     try {

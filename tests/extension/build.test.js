@@ -36,7 +36,7 @@ const EXPECTED_FILES = [
 
 const EXPECTED_NATIVE_FILES = EXPECTED_FILES
   .filter((file) => file !== "extension/state/smoke-state.js")
-  .concat(["extension/state/native-state-provider.js"])
+  .concat(["extension/state/browser-routing-writer.js", "extension/state/native-state-provider.js"])
   .sort();
 
 let normal;
