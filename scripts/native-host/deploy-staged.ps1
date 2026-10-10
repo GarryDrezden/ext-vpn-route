@@ -127,6 +127,16 @@ function Assert-ManifestPointsToExecutable {
     }
 }
 
+function Invoke-VpnRouteNativeHostMaintenanceScript {
+    param(
+        [Parameter(Mandatory = $true)][string]$ScriptPath,
+        [object[]]$ScriptParameters = @()
+    )
+
+    # In-process .ps1 calls have no native exit code under Set-StrictMode Latest; rely on throw / ErrorAction Stop.
+    & $ScriptPath @ScriptParameters
+}
+
 function Restore-VpnRouteNativeHostRegistration {
     param(
         [string]$RegisterTarget = 'Chrome',
@@ -136,14 +146,17 @@ function Restore-VpnRouteNativeHostRegistration {
     $restoreExe = if ($LiveExecutablePath) { $LiveExecutablePath } else { $script:ExecutablePath }
     if (-not (Test-Path -LiteralPath $restoreExe -PathType Leaf)) { return }
     Write-Host 'Attempting native host registration restore after failure...'
-    if ($LiveExecutablePath) {
-        & $registerScript -Target $RegisterTarget -LiveExecutablePath $restoreExe
+    try {
+        if ($LiveExecutablePath) {
+            Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $registerScript -ScriptParameters @('-Target', $RegisterTarget, '-LiveExecutablePath', $restoreExe)
+        }
+        else {
+            Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $registerScript -ScriptParameters @('-Target', $RegisterTarget)
+        }
     }
-    else {
-        & $registerScript -Target $RegisterTarget
-    }
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning 'Registration restore failed; run scripts/native-host/register.ps1 manually.'
+    catch {
+        Write-Warning "Registration restore failed: $($_.Exception.Message)"
+        Write-Warning 'Run scripts/native-host/register.ps1 manually.'
     }
 }
 
@@ -160,15 +173,13 @@ $unregisterTarget = if ($Target -eq 'Chrome') { 'All' } else { $Target }
 $unregistered = $false
 try {
     Write-Host "Deploy staged native host -> $liveDir (versioned exe)"
-    & $unregisterScript -Target $unregisterTarget
-    if ($LASTEXITCODE -ne 0) { throw "unregister.ps1 failed (exit $LASTEXITCODE)." }
+    Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $unregisterScript -ScriptParameters @('-Target', $unregisterTarget)
     $unregistered = $true
 
     $newExecutablePath = Publish-StagedNativeHostExecutable -StagingExecutablePath $staging -LiveDirectory $liveDir
     Write-Host "Published live binary: $newExecutablePath"
 
-    & $registerScript -Target $Target -LiveExecutablePath $newExecutablePath
-    if ($LASTEXITCODE -ne 0) { throw "register.ps1 failed (exit $LASTEXITCODE)." }
+    Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $registerScript -ScriptParameters @('-Target', $Target, '-LiveExecutablePath', $newExecutablePath)
     Assert-ManifestPointsToExecutable -ExpectedExecutablePath $newExecutablePath
     $registrationVerified = $true
 
@@ -176,8 +187,7 @@ try {
         Stop-VpnRouteNativeHostProcessesBestEffort -ExecutablePaths $oldExecutablePaths
     }
 
-    & $statusScript
-    if ($LASTEXITCODE -ne 0) { throw "status.ps1 reported inconsistent state (exit $LASTEXITCODE)." }
+    Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $statusScript
 
     Write-Host 'DEPLOY STAGED NATIVE HOST OK'
 }

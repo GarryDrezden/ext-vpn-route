@@ -63,6 +63,6 @@ Write-Host "Spike host keys:  $(if ($spikeKeys) { $spikeKeys -join ', ' } else {
 if ($problems.Count -gt 0) {
     foreach ($p in $problems) { Write-Host "PROBLEM: $p" }
     Write-Host 'STATUS: INCONSISTENT'
-    exit 1
+    throw 'Native host status is inconsistent (see PROBLEM lines above).'
 }
 Write-Host ("STATUS: {0}" -f $(if ($registered.Count -gt 0) { "REGISTERED ($($registered -join ', '))" } else { 'NOT REGISTERED' }))

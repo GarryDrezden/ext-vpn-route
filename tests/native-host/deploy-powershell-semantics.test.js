@@ -7,6 +7,16 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
+test("deploy in-process script invocation and post-unregister recovery (PS 5.1)", () => {
+  const out = execFileSync(
+    "powershell.exe",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+      path.join(ROOT, "tests/native-host/deploy-inprocess-regression.ps1")],
+    { encoding: "utf8" }
+  );
+  assert.match(out, /DEPLOY INPROCESS REGRESSION OK/);
+});
+
 test("deploy PowerShell 5.1 count helpers (0/1/N)", () => {
   const out = execFileSync(
     "powershell.exe",
@@ -23,10 +33,14 @@ test("versioned deploy wiring and manifest contract", () => {
   const status = readFileSync(path.join(ROOT, "scripts/native-host/status.ps1"), "utf8");
   const common = readFileSync(path.join(ROOT, "scripts/native-host/common.ps1"), "utf8");
 
-  assert.match(deploy, /-LiveExecutablePath \$newExecutablePath/);
+  assert.match(deploy, /'-LiveExecutablePath', \$newExecutablePath/);
   assert.match(deploy, /Assert-ManifestPointsToExecutable/);
   assert.match(deploy, /registrationVerified/);
   assert.doesNotMatch(deploy, /powershell\.exe.*register\.ps1/);
+  assert.doesNotMatch(deploy, /\$LASTEXITCODE\s+-ne/);
+  assert.match(deploy, /Invoke-VpnRouteNativeHostMaintenanceScript/);
+  assert.match(deploy, /Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath \$unregisterScript[\s\S]*\$unregistered = \$true/);
+  assert.match(status, /throw 'Native host status is inconsistent/);
   assert.match(register, /LiveExecutablePath/);
   assert.match(register, /if \(-not \[string\]::IsNullOrWhiteSpace\(\$LiveExecutablePath\)\)/);
   assert.match(status, /if \(\$manifest\.path\)/);
