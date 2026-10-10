@@ -8,16 +8,16 @@ import { isChromiumManifestVersion } from "../scripts/slice8-failclosed-fixture.
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-test("product version model maps RC16 correctly", () => {
+test("product version model maps RC17 correctly", () => {
   const model = loadProductVersion();
   assert.equal(model.productVersion, "1.0.0");
   assert.equal(model.releaseChannel, "RC");
-  assert.equal(model.releaseRevision, 16);
-  assert.equal(model.displayVersion, "1.0.0 RC16");
-  assert.equal(model.numericVersion, "1.0.0.16");
-  assert.equal(model.npmVersion, "1.0.0-rc.16");
-  assert.equal(model.manifestVersion, "1.0.0.16");
-  assert.equal(model.manifestVersionName, "1.0.0 RC16");
+  assert.equal(model.releaseRevision, 17);
+  assert.equal(model.displayVersion, "1.0.0 RC17");
+  assert.equal(model.numericVersion, "1.0.0.17");
+  assert.equal(model.npmVersion, "1.0.0-rc.17");
+  assert.equal(model.manifestVersion, "1.0.0.17");
+  assert.equal(model.manifestVersionName, "1.0.0 RC17");
   assert.notEqual(model.productVersion, "1.0.14");
 });
 
@@ -31,7 +31,7 @@ test("extension manifest carries numeric and display RC identity", () => {
 
 test("package.json uses npm prerelease mapping not fake 1.0.14", () => {
   const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
-  assert.equal(pkg.version, "1.0.0-rc.16");
+  assert.equal(pkg.version, "1.0.0-rc.17");
 });
 
 test("native host props stay in sync with version json", () => {
