@@ -7,6 +7,16 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
+test("deploy old-host cleanup avoids read-only $PID collision (PS 5.1)", () => {
+  const out = execFileSync(
+    "powershell.exe",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+      path.join(ROOT, "tests/native-host/deploy-pid-cleanup-regression.ps1")],
+    { encoding: "utf8" }
+  );
+  assert.match(out, /DEPLOY PID CLEANUP REGRESSION OK/);
+});
+
 test("deploy hashtable splatting binds Target and LiveExecutablePath (PS 5.1)", () => {
   const out = execFileSync(
     "powershell.exe",
@@ -54,6 +64,9 @@ test("versioned deploy wiring and manifest contract", () => {
   assert.match(common, /function Invoke-VpnRouteNativeHostMaintenanceScript/);
   assert.match(common, /\[hashtable\]\$BoundParameters/);
   assert.match(deploy, /Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath \$unregisterScript[\s\S]*\$unregistered = \$true/);
+  assert.match(deploy, /\$nativeHostProcessId/);
+  assert.doesNotMatch(deploy, /\$pid\s*=/i);
+  assert.match(deploy, /\$registrationVerified = \$true[\s\S]*Stop-VpnRouteNativeHostProcessesBestEffort[\s\S]*Old native host cleanup failed/);
   assert.match(status, /throw 'Native host status is inconsistent/);
   assert.match(register, /LiveExecutablePath/);
   assert.match(register, /if \(-not \[string\]::IsNullOrWhiteSpace\(\$LiveExecutablePath\)\)/);

@@ -55,16 +55,16 @@ function Stop-VpnRouteNativeHostProcessesBestEffort {
         $alive = Get-VpnRouteNativeHostCimProcesses -ExecutablePaths $paths
         if ((Get-CollectionCount $alive) -eq 0) { return }
         foreach ($proc in $alive) {
-            $pid = [int]$proc.ProcessId
-            if ($stoppedIds.ContainsKey($pid)) { continue }
-            Write-Host "Stopping VPN Route native host pid=$pid"
+            $nativeHostProcessId = [int]$proc.ProcessId
+            if ($stoppedIds.ContainsKey($nativeHostProcessId)) { continue }
+            Write-Host "Stopping VPN Route native host pid=$nativeHostProcessId"
             try {
-                Stop-Process -Id $pid -Force -ErrorAction Stop
+                Stop-Process -Id $nativeHostProcessId -Force -ErrorAction Stop
             }
             catch {
-                Write-Warning "Stop-Process pid=$pid failed: $($_.Exception.Message)"
+                Write-Warning "Stop-Process pid=$nativeHostProcessId failed: $($_.Exception.Message)"
             }
-            $stoppedIds[$pid] = $true
+            $stoppedIds[$nativeHostProcessId] = $true
         }
         Start-Sleep -Milliseconds 250
     }
@@ -184,7 +184,12 @@ try {
     $registrationVerified = $true
 
     if ((Get-CollectionCount $oldExecutablePaths) -gt 0) {
-        Stop-VpnRouteNativeHostProcessesBestEffort -ExecutablePaths $oldExecutablePaths
+        try {
+            Stop-VpnRouteNativeHostProcessesBestEffort -ExecutablePaths $oldExecutablePaths
+        }
+        catch {
+            Write-Warning "Old native host cleanup failed (new registration stays active): $($_.Exception.Message)"
+        }
     }
 
     Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $statusScript

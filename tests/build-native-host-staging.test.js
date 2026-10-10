@@ -35,6 +35,8 @@ test("deploy uses versioned live exe so connectNative cannot lock promotion", ()
   assert.match(deployPs1, /Get-CimInstance Win32_Process/);
   assert.match(deployPs1, /Get-CollectionCount/);
   assert.match(deployPs1, /Old native host process\(es\) still running/);
+  assert.match(deployPs1, /\$nativeHostProcessId/);
+  assert.match(deployPs1, /Old native host cleanup failed \(new registration stays active\)/);
 });
 
 test("deploy does not kill browser processes; stop is scoped by executable path", () => {
