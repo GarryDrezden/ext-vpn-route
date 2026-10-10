@@ -24,7 +24,7 @@ public class ContractTests
         Assert.Equal(1, result.GetProperty("protocolVersion").GetInt32());
         string hostVersion = result.GetProperty("hostVersion").GetString()!;
         Assert.Matches(@"^\d+\.\d+\.\d+(\.\d+)?( RC\d+)?$", hostVersion);
-        Assert.Contains("RC17", hostVersion, StringComparison.Ordinal);
+        Assert.Contains("RC18", hostVersion, StringComparison.Ordinal);
     }
 
     [Fact]

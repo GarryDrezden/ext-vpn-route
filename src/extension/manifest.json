@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "VPN Route",
-  "version": "1.0.0.17",
-  "version_name": "1.0.0 RC17",
+  "version": "1.0.0.18",
+  "version_name": "1.0.0 RC18",
   "description": "Per-domain browser routing for VPN Route. Applies a generated PAC; does not run a VPN itself.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAw0aFrA+RLzoivNS2j+vwgoHZ80ZvHjI66gGcFuQwm0ifRPVss8Ql0pi0Aghs5ArT9g/qcJYBoSYx1aq9JNQvF5f2TcyvU4iRXkI3C1EYvABrSh56CfykmKTNQbsSKt1168QveF9PDfyt9VVqJmWeGU0lSP/5FrHZycj0bsj2NbBeQ/uTkGPIKAa4F6+U9rzqPkKcafXvoDqHW2xi1dsuca51Y4L27L+nakkXRSlemdssvji2wOe5OZF2aTwZmczuXedL3yvq1ROIiQKnCpWcUhMIVM+xzW2Y3RCDEfnSbMcpRWDlhmGpUdlQZQ/tMIbndaeyCPqD87MBT6KBkYlphQIDAQAB",
   "permissions": ["proxy", "storage", "alarms"],
