@@ -129,7 +129,7 @@ Host — тупой bridge. Каждая команда отображается
 ### `ping`
 
 ```json
-{ "command": "pong", "host": "SelectiveVpnRouter.NativeHost", "protocolVersion": 1, "hostVersion": "1.0.0" }
+{ "command": "pong", "host": "SelectiveVpnRouter.NativeHost", "protocolVersion": 1, "hostVersion": "1.0.0 RC14" }
 ```
 
 ### `getStateManifest`

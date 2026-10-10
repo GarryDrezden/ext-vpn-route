@@ -512,6 +512,5 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         return parts[0] == "127";
     }
 
-    internal static string HostVersion { get; } =
-        typeof(RequestDispatcher).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+    internal static string HostVersion { get; } = ProductHostVersion.Display;
 }

@@ -25,6 +25,7 @@ import {
   isChromiumManifestVersion,
   renderSlice8FailClosedSmokeModule
 } from "./slice8-failclosed-fixture.js";
+import { applyProductVersionToManifest } from "./product-version.js";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const DIST_ROOT = path.join(ROOT, "dist");
@@ -149,6 +150,9 @@ export async function buildExtension(options = {}) {
 
   const manifest = JSON.parse(readFileSync(path.join(ROOT, "src/extension/manifest.json"), "utf8"));
   manifest.permissions = [...PERMISSIONS[mode]];
+  if (fixture !== SLICE8_FAILCLOSED_FIXTURE_NAME) {
+    applyProductVersionToManifest(manifest);
+  }
   writeFileSync(path.join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", "utf8");
 
   for (const source of SOURCES[mode]) {

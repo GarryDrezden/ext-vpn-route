@@ -7,7 +7,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>SelectiveVpnRouter.NativeHost</AssemblyName>
     <RootNamespace>VpnRoute.NativeHost</RootNamespace>
-    <Version>1.0.0</Version>
     <InvariantGlobalization>true</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

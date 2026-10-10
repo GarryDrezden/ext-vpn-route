@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <!-- Keep in sync with version/product-version.json (extension repo SSOT for Node + Native Host). -->
+    <VpnRouteProductVersion>1.0.0</VpnRouteProductVersion>
+    <VpnRouteReleaseChannel>RC</VpnRouteReleaseChannel>
+    <VpnRouteReleaseRevision>14</VpnRouteReleaseRevision>
+    <Version>$(VpnRouteProductVersion)</Version>
+    <AssemblyVersion>$(VpnRouteProductVersion).$(VpnRouteReleaseRevision)</AssemblyVersion>
+    <FileVersion>$(VpnRouteProductVersion).$(VpnRouteReleaseRevision)</FileVersion>
+    <InformationalVersion Condition="'$(VpnRouteReleaseChannel)' != '' and '$(VpnRouteReleaseRevision)' != '0'">$(VpnRouteProductVersion) $(VpnRouteReleaseChannel)$(VpnRouteReleaseRevision)</InformationalVersion>
+    <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(VpnRouteProductVersion)</InformationalVersion>
+  </PropertyGroup>
+</Project>

@@ -1,6 +1,6 @@
 {
   "name": "ext-vpn-route",
-  "version": "1.0.0",
+  "version": "1.0.0-rc.14",
   "private": true,
   "description": "Browser side of VPN Route: per-domain routing for Chromium.",
   "type": "module",

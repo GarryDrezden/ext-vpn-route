@@ -22,7 +22,9 @@ public class ContractTests
         Assert.Equal("pong", result.GetProperty("command").GetString());
         Assert.Equal("SelectiveVpnRouter.NativeHost", result.GetProperty("host").GetString());
         Assert.Equal(1, result.GetProperty("protocolVersion").GetInt32());
-        Assert.Matches(@"^\d+\.\d+\.\d+$", result.GetProperty("hostVersion").GetString());
+        string hostVersion = result.GetProperty("hostVersion").GetString()!;
+        Assert.Matches(@"^\d+\.\d+\.\d+(\.\d+)?( RC\d+)?$", hostVersion);
+        Assert.Contains("RC14", hostVersion, StringComparison.Ordinal);
     }
 
     [Fact]
