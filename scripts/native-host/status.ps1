@@ -6,6 +6,15 @@ $ErrorActionPreference = 'Stop'
 
 $origin = Get-AllowedOrigin
 $exe = [IO.Path]::GetFullPath($script:ExecutablePath)
+if (Test-Path -LiteralPath $script:ManifestPath -PathType Leaf) {
+    try {
+        $manifest = [IO.File]::ReadAllText($script:ManifestPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+        if ($manifest.path) {
+            $exe = [IO.Path]::GetFullPath([string]$manifest.path)
+        }
+    }
+    catch { }
+}
 $exeExists = Test-Path -LiteralPath $exe -PathType Leaf
 $problems = New-Object Collections.Generic.List[string]
 

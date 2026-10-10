@@ -1,18 +1,24 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Chrome', 'Chromium', 'All')]
-    [string]$Target = 'Chrome'
+    [string]$Target = 'Chrome',
+    [string]$ExecutablePath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
-if (-not (Test-Path -LiteralPath $script:ExecutablePath -PathType Leaf)) {
-    throw "Native host executable not found: $script:ExecutablePath. Build it first: $script:BuildCommand"
+$origin = Get-AllowedOrigin
+$exe = if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
+    [IO.Path]::GetFullPath($script:ExecutablePath)
+}
+else {
+    [IO.Path]::GetFullPath($ExecutablePath)
 }
 
-$origin = Get-AllowedOrigin
-$exe = [IO.Path]::GetFullPath($script:ExecutablePath)
+if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+    throw "Native host executable not found: $exe. Build it first: $script:BuildCommand"
+}
 
 [void][IO.Directory]::CreateDirectory($script:ManifestDirectory)
 $json = New-HostManifestJson -ExecutablePath $exe -Origin $origin

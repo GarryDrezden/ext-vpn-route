@@ -81,12 +81,14 @@ test("native host build uses staging; deploy runs only after mutation boundary",
   assert.match(helpers, /Invoke-VpnRouteDeployStagedNativeHost/);
   assert.match(helpers, /deploy-staged\.ps1/);
   assert.match(helpers, /Staged native host missing/);
+  assert.match(helpers, /native-messaging\\com\.vpnroute\.browser\.json/);
 });
 
 test("deploy script scopes process stop to live executable path", (t) => {
   const deploy = readFileSync(path.join(ROOT, "scripts/native-host/deploy-staged.ps1"), "utf8");
-  assert.match(deploy, /GetFullPath/);
+  assert.match(deploy, /Win32_Process/);
   assert.match(deploy, /OrdinalIgnoreCase/);
+  assert.match(deploy, /NativeHost\.\$stamp\.exe/);
   assert.doesNotMatch(deploy, /Stop-Process.*-Name.*browser/i);
 });
 
