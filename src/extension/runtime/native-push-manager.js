@@ -19,12 +19,23 @@ export function wireNativePushManager(chromeApi, coordinator, options) {
   let port = null;
   let stopped = false;
   let pushEnabled = false;
+  let reconnectTimer = null;
+
+  function clearReconnectTimer() {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  }
 
   function scheduleReconnect() {
-    if (stopped) return;
+    if (stopped || !pushEnabled || port || reconnectTimer !== null) return;
     const delay = BACKOFF_MS[Math.min(backoffIndex, BACKOFF_MS.length - 1)];
     backoffIndex = Math.min(backoffIndex + 1, BACKOFF_MS.length - 1);
-    setTimeout(connect, delay);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delay);
   }
 
   function resetBackoff() {
@@ -48,50 +59,61 @@ export function wireNativePushManager(chromeApi, coordinator, options) {
   }
 
   function connect() {
-    if (stopped || !pushEnabled) return;
+    if (stopped || !pushEnabled || port) return;
+    clearReconnectTimer();
+    let connectedPort;
     try {
-      port = runtime.connectNative(NATIVE_HOST_NAME);
+      connectedPort = runtime.connectNative(NATIVE_HOST_NAME);
     } catch (error) {
       scheduleReconnect();
       return;
     }
-    if (!port) {
+    if (!connectedPort) {
       scheduleReconnect();
       return;
     }
 
-    port.onMessage.addListener((message) => {
+    port = connectedPort;
+
+    connectedPort.onMessage.addListener((message) => {
       resetBackoff();
       void onEvent(message);
     });
-    port.onDisconnect.addListener(() => {
+    connectedPort.onDisconnect.addListener(() => {
+      if (port !== connectedPort) return;
       port = null;
       scheduleReconnect();
     });
 
     try {
-      port.postMessage({
+      connectedPort.postMessage({
         protocolVersion: 1,
         requestId: "push-" + Date.now().toString(36),
         command: "watchEvents"
       });
     } catch (error) {
-      port.disconnect();
-      port = null;
+      try { connectedPort.disconnect(); } catch (_) { /* ignore */ }
+      if (port === connectedPort) port = null;
       scheduleReconnect();
     }
   }
 
   function updateCapabilities(capabilities) {
     if (!Array.isArray(capabilities)) return;
-    pushEnabled = capabilities.includes(PUSH_CAPABILITY);
-    if (pushEnabled) connect();
-    else {
-      stopped = true;
-      if (port) {
-        try { port.disconnect(); } catch (_) { /* ignore */ }
-        port = null;
-      }
+    const nextEnabled = capabilities.includes(PUSH_CAPABILITY);
+    if (nextEnabled === pushEnabled) {
+      if (nextEnabled && port) return;
+      if (!nextEnabled && !port) return;
+    }
+    pushEnabled = nextEnabled;
+    if (pushEnabled) {
+      connect();
+      return;
+    }
+    clearReconnectTimer();
+    if (port) {
+      try { port.disconnect(); } catch (_) { /* ignore */ }
+      port = null;
     }
   }
 
@@ -108,6 +130,7 @@ export function wireNativePushManager(chromeApi, coordinator, options) {
     refreshCapabilities,
     stop() {
       stopped = true;
+      clearReconnectTimer();
       if (port) {
         try { port.disconnect(); } catch (_) { /* ignore */ }
         port = null;
