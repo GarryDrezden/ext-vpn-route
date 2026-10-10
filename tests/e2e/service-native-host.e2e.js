@@ -15,7 +15,8 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
-import { HOST_EXE, ROOT, hostEnv, newTestPipeName, processRuntime } from "../../scripts/build-native-host.js";
+import { HOST_STAGING_EXE, ROOT, hostEnv, newTestPipeName, processRuntime } from "../../scripts/build-native-host.js";
+const HOST_EXE = HOST_STAGING_EXE;
 import { compileBrowserRoutingState } from "../../src/domain/browser-routing/index.js";
 import { compilePacScript } from "../../src/pac/index.js";
 import { createProxyController } from "../../src/extension/runtime/proxy-controller.js";
@@ -128,8 +129,13 @@ function assertRoutingMatches(state, port) {
   assert.equal(matcher.ok, true);
   const hosts = [];
   for (const rule of state.rules) {
-    hosts.push(rule.host);
-    if (rule.host.length + 9 <= 253) hosts.push("deep.sub." + rule.host);
+    const ruleHosts = Array.isArray(rule.hosts) && rule.hosts.length > 0
+      ? rule.hosts
+      : (rule.host ? [rule.host] : []);
+    for (const h of ruleHosts) {
+      hosts.push(h);
+      if (h.length + 9 <= 253) hosts.push("deep.sub." + h);
+    }
   }
   hosts.push("unmatched.example", "e2e-routing.example", "example.org");
   const actual = pac.findMany(hosts);

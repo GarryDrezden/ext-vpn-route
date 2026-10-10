@@ -1,5 +1,5 @@
 import { MatchType, RouteMode } from "../../domain/browser-routing/constants.js";
-import { labelMatchType, labelRouteMode } from "./rules-labels.js";
+import { formatRuleHostsLabel, labelMatchType, labelRouteMode } from "./rules-labels.js";
 import { buildUserRule, generateRuleId } from "./rule-form-helpers.js";
 import {
   createChromeSessionDraftStore,
@@ -133,9 +133,16 @@ export function createRulesUi(deps) {
     };
   }
 
+  function hostsToEditorText(ruleOrFields) {
+    if (Array.isArray(ruleOrFields.hosts) && ruleOrFields.hosts.length > 0) {
+      return ruleOrFields.hosts.join("\n");
+    }
+    return String(ruleOrFields.host ?? "");
+  }
+
   function applyFormFields(fields) {
     els["rule-name"].value = fields.name ?? "";
-    els["rule-host"].value = fields.host ?? "";
+    els["rule-host"].value = hostsToEditorText(fields);
     els["rule-match"].value = fields.matchType ?? MatchType.DomainAndSubdomains;
     setRouteMode(fields.routeMode ?? RouteMode.VPN);
     els["rule-enabled"].checked = fields.enabled !== false;
@@ -239,7 +246,7 @@ export function createRulesUi(deps) {
     if (!rule.enabled) badges.appendChild(textEl("span", "Выключено", "pill pill-off"));
     head.appendChild(badges);
     main.appendChild(head);
-    main.appendChild(textEl("div", rule.host, "rule-card-host"));
+    main.appendChild(textEl("div", formatRuleHostsLabel(rule), "rule-card-host"));
 
     const actions = document.createElement("div");
     actions.className = "rule-card-actions";
@@ -469,7 +476,7 @@ export function createRulesUi(deps) {
 
   function confirmDelete(rule) {
     openConfirmBar(
-      "Удалить правило «" + rule.name + "» (" + rule.host + ")?",
+      "Удалить правило «" + rule.name + "» (" + formatRuleHostsLabel(rule) + ")?",
       "delete",
       rule.id
     );

@@ -14,6 +14,7 @@ describe("validateRule", () => {
     const result = validateRule(input);
     assert.equal(result.ok, true);
     assert.deepEqual(result.issues, []);
+    assert.deepEqual(result.rule.hosts, ["www.example.com"]);
     assert.equal(result.rule.host, "www.example.com");
     assert.equal(result.rule.id, "abc_1-2");
     assert.ok(Object.isFrozen(result.rule));
@@ -38,7 +39,7 @@ describe("validateRule", () => {
     const result = validateRule({}, "/rules/0");
     assert.equal(result.ok, false);
     assert.deepEqual(result.issues.map((entry) => entry.path).sort(), [
-      "/rules/0/enabled", "/rules/0/host", "/rules/0/id", "/rules/0/matchType",
+      "/rules/0/enabled", "/rules/0/hosts", "/rules/0/id", "/rules/0/matchType",
       "/rules/0/name", "/rules/0/routeMode", "/rules/0/source"
     ]);
     assert.ok(result.issues.every((entry) => entry.code === IssueCode.MissingField));
@@ -208,6 +209,48 @@ describe("validateRuleSet: duplicates and conflicts", () => {
   test("too many rules", () => {
     const rules = new Array(10001).fill(null);
     assert.deepEqual(codes(validateRuleSet(rules).issues), [IssueCode.TooManyRules]);
+  });
+
+  test("multi-host rule conflicts on any shared host", () => {
+    const multi = Object.assign({}, exact("a.com", "VPN"), { hosts: ["a.com", "b.com"] });
+    delete multi.host;
+    const bOnly = Object.assign({}, exact("b.com", "Direct"));
+    delete bOnly.host;
+    bOnly.hosts = ["b.com"];
+    const result = validateRuleSet([multi, bOnly]);
+    assert.deepEqual(codes(result.issues), [IssueCode.ConflictingRules]);
+    assert.equal(result.issues[0].host, "b.com");
+  });
+
+  test("duplicate hosts within one rule are deduped", () => {
+    const input = Object.assign({}, domain("example.com", "VPN"), {
+      hosts: ["Example.COM", "example.com.", " b.com ", "b.com"]
+    });
+    delete input.host;
+    const result = validateRule(input);
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.rule.hosts, ["example.com", "b.com"]);
+  });
+});
+
+describe("validateRule: hosts field", () => {
+  test("legacy host migrates to hosts", () => {
+    const result = validateRule(exact("Example.COM.", "VPN"));
+    assert.deepEqual(result.rule.hosts, ["example.com"]);
+    assert.equal(result.rule.host, "example.com");
+  });
+
+  test("host and hosts together require matching primary host", () => {
+    const ok = Object.assign({}, exact("example.com", "VPN"), { hosts: ["example.com"] });
+    assert.equal(validateRule(ok).ok, true);
+    const bad = Object.assign({}, exact("example.com", "VPN"), { hosts: ["other.com"] });
+    assert.deepEqual(codes(validateRule(bad).issues), [IssueCode.InvalidType]);
+  });
+
+  test("empty hosts array is invalid", () => {
+    const input = exact("example.com", "VPN", { hosts: [] });
+    delete input.host;
+    assert.deepEqual(codes(validateRule(input).issues), [IssueCode.InvalidHost]);
   });
 });
 

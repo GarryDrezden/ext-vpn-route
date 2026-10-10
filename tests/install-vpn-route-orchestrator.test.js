@@ -41,7 +41,8 @@ test("install orchestrator exists in vpn-gateway", (t) => {
   const ps1 = readFileSync(INSTALL_PS1, "utf8");
   assert.match(ps1, /CheckOnly/);
   assert.match(ps1, /ExtensionRepoPath/);
-  assert.match(ps1, /register\.ps1/);
+  assert.match(ps1, /Invoke-VpnRouteDeployStagedNativeHost/);
+  assert.doesNotMatch(ps1, /register\.ps1/);
   assert.match(ps1, /Invoke-VpnRouteExtensionBuildPhase/);
   assert.match(ps1, /\& \$updateScript/);
   assert.doesNotMatch(ps1, /register-native-host\.ps1/);
@@ -70,6 +71,23 @@ test("CheckOnly branch avoids build, register, and update-desktop", (t) => {
   assert.doesNotMatch(block, /Invoke-VpnRouteExtensionBuildPhase/);
   assert.doesNotMatch(block, /register\.ps1/);
   assert.doesNotMatch(block, /\& \$updateScript/);
+});
+
+test("native host build uses staging; deploy runs only after mutation boundary", (t) => {
+  if (!existsSync(HELPERS_PS1)) t.skip("helpers missing");
+  const helpers = readFileSync(HELPERS_PS1, "utf8");
+  const buildJs = readFileSync(path.join(ROOT, "scripts/build-native-host.js"), "utf8");
+  assert.match(buildJs, /native-host-staging/);
+  assert.match(helpers, /Invoke-VpnRouteDeployStagedNativeHost/);
+  assert.match(helpers, /deploy-staged\.ps1/);
+  assert.match(helpers, /Staged native host missing/);
+});
+
+test("deploy script scopes process stop to live executable path", (t) => {
+  const deploy = readFileSync(path.join(ROOT, "scripts/native-host/deploy-staged.ps1"), "utf8");
+  assert.match(deploy, /GetFullPath/);
+  assert.match(deploy, /OrdinalIgnoreCase/);
+  assert.doesNotMatch(deploy, /Stop-Process.*-Name.*browser/i);
 });
 
 test("installer distinguishes pre-mutation vs partial-update failure hints", (t) => {

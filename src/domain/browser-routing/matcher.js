@@ -24,7 +24,10 @@ export function compileBrowserRoutingState(state) {
   const domain = new Map();
   for (const rule of canonical.rules) {
     if (!rule.enabled) continue;
-    (rule.matchType === MatchType.ExactHost ? exact : domain).set(rule.host, rule);
+    const table = rule.matchType === MatchType.ExactHost ? exact : domain;
+    for (const host of rule.hosts) {
+      table.set(host, rule);
+    }
   }
 
   return Object.freeze({
@@ -81,10 +84,13 @@ function matchCompiled(state, exact, domain, host) {
 
   const normalizedHost = normalized.host;
   let rule = exact.get(normalizedHost);
+  let matchedPatternHost = rule ? normalizedHost : null;
   if (!rule) {
     const labels = normalizedHost.split(".");
     for (let start = 0; start < labels.length && !rule; start++) {
-      rule = domain.get(labels.slice(start).join("."));
+      const suffix = labels.slice(start).join(".");
+      rule = domain.get(suffix);
+      if (rule) matchedPatternHost = suffix;
     }
   }
 
@@ -114,7 +120,7 @@ function matchCompiled(state, exact, domain, host) {
     matched: true,
     matchedRuleId: rule.id,
     matchedRuleName: rule.name,
-    matchedRuleHost: rule.host,
+    matchedRuleHost: matchedPatternHost,
     matchType: rule.matchType,
     ruleRouteMode: rule.routeMode,
     effectiveRoute: isDefault ? state.defaultRoute : rule.routeMode,

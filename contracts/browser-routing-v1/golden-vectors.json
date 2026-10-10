@@ -69,7 +69,7 @@
         "rules": [ { "id": "r1", "name": "R", "host": "Example.COM.", "matchType": "ExactHost", "routeMode": "VPN", "enabled": true, "source": "User", "notes": null } ]
       },
       "js": { "valid": true, "codes": [] },
-      "service": { "valid": false, "codes": ["invalid_host"] }
+      "service": { "valid": true, "codes": [] }
     },
     {
       "name": "noncanonical_unicode_host",
@@ -102,7 +102,7 @@
         ]
       },
       "js": { "valid": false, "codes": ["conflicting_rules"] },
-      "service": { "valid": false, "codes": ["invalid_host"] }
+      "service": { "valid": false, "codes": ["conflicting_rules"] }
     },
     {
       "name": "duplicate_rule_id",

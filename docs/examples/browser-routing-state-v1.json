@@ -6,6 +6,7 @@
     {
       "id": "youtube",
       "name": "YouTube",
+      "hosts": ["youtube.com"],
       "host": "youtube.com",
       "matchType": "DomainAndSubdomains",
       "routeMode": "VPN",
@@ -16,6 +17,7 @@
     {
       "id": "chatgpt",
       "name": "ChatGPT",
+      "hosts": ["chatgpt.com"],
       "host": "chatgpt.com",
       "matchType": "DomainAndSubdomains",
       "routeMode": "VPN",
@@ -26,6 +28,7 @@
     {
       "id": "google",
       "name": "Google",
+      "hosts": ["google.com"],
       "host": "google.com",
       "matchType": "DomainAndSubdomains",
       "routeMode": "VPN",
@@ -36,6 +39,7 @@
     {
       "id": "google-maps",
       "name": "Google Maps",
+      "hosts": ["maps.google.com"],
       "host": "maps.google.com",
       "matchType": "ExactHost",
       "routeMode": "Default",
@@ -46,6 +50,7 @@
     {
       "id": "ozon",
       "name": "Ozon",
+      "hosts": ["ozon.ru"],
       "host": "ozon.ru",
       "matchType": "DomainAndSubdomains",
       "routeMode": "Direct",
@@ -56,6 +61,7 @@
     {
       "id": "gosuslugi",
       "name": "Госуслуги",
+      "hosts": ["gosuslugi.ru"],
       "host": "gosuslugi.ru",
       "matchType": "DomainAndSubdomains",
       "routeMode": "Direct",

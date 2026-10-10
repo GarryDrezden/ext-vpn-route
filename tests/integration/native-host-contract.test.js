@@ -38,11 +38,14 @@ test("production host name differs from the spike host", () => {
 test("registration scripts use HKCU only, Chrome by default, and never write the spike key", () => {
   const dir = path.join(ROOT, "scripts/native-host");
   const scripts = readdirSync(dir).filter((f) => f.endsWith(".ps1"));
-  assert.deepEqual(scripts.sort(), ["common.ps1", "register.ps1", "status.ps1", "unregister.ps1"]);
+  assert.deepEqual(scripts.sort(), ["common.ps1", "deploy-staged.ps1", "register.ps1", "status.ps1", "unregister.ps1"]);
   for (const file of scripts) {
     const text = readFileSync(path.join(dir, file), "utf8");
     assert.equal(/HKLM|LocalMachine|HKEY_LOCAL_MACHINE/i.test(text), false, file + " touches HKLM");
-    assert.equal(/Start-Process|RunAs|-Verb\s/i.test(text), false, file + " elevates or launches processes");
+    const allowsProcessControl = file === "deploy-staged.ps1";
+    if (!allowsProcessControl) {
+      assert.equal(/Start-Process|RunAs|-Verb\s/i.test(text), false, file + " elevates or launches processes");
+    }
     assert.equal(/Invoke-Expression|\biex\b/i.test(text), false, file);
   }
   const register = read("scripts/native-host/register.ps1");

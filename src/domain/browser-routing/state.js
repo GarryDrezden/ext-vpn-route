@@ -49,12 +49,14 @@ export function validateRuleSet(rules, path = "/rules") {
     canonical.push(rule);
     if (!rule.enabled) return;
 
-    const key = rule.matchType + " " + rule.host;
-    const group = activeKeys.get(key);
-    if (group) {
-      group.push({ id: rule.id, path: rulePath });
-    } else {
-      activeKeys.set(key, [{ id: rule.id, path: rulePath }]);
+    for (const host of rule.hosts) {
+      const key = rule.matchType + " " + host;
+      const group = activeKeys.get(key);
+      if (group) {
+        group.push({ id: rule.id, path: rulePath });
+      } else {
+        activeKeys.set(key, [{ id: rule.id, path: rulePath }]);
+      }
     }
   });
 

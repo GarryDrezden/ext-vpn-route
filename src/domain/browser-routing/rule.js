@@ -2,8 +2,8 @@ import { Limits, MATCH_TYPES, ROUTE_MODES, RULE_SOURCES } from "./constants.js";
 import { normalizeHost } from "./host.js";
 import { IssueCode, hasOwn, isPlainObject, issue, pointer } from "./issues.js";
 
-const REQUIRED_FIELDS = Object.freeze(["id", "name", "host", "matchType", "routeMode", "enabled", "source"]);
-const ALLOWED_FIELDS = Object.freeze(new Set([...REQUIRED_FIELDS, "notes"]));
+const REQUIRED_FIELDS = Object.freeze(["id", "name", "matchType", "routeMode", "enabled", "source"]);
+const ALLOWED_FIELDS = Object.freeze(new Set([...REQUIRED_FIELDS, "hosts", "host", "notes"]));
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const NAME_FORBIDDEN = /[\u0000-\u001F\u007F-\u009F]/u;
 const NOTES_FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
@@ -11,8 +11,8 @@ const NOTES_FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u
 /**
  * Validates one rule and returns its canonical form.
  *
- * The only rewrite is host canonicalization and an absent `notes` becoming null.
- * Any other invalid value is reported, never repaired.
+ * Canonical rules expose `hosts` (1+ normalized domains) and mirror `host` as `hosts[0]`
+ * for backward-compatible JSON. Legacy persisted `host` migrates on read to `hosts`.
  *
  * @param {unknown} input
  * @param {string} [path] JSON Pointer of the rule, used in issues.
@@ -36,9 +36,32 @@ export function validateRule(input, path = "") {
     }
   }
 
-  const { id, name, host, matchType, routeMode, enabled, source } = input;
+  const hasLegacyHost = hasOwn(input, "host");
+  const hasHosts = hasOwn(input, "hosts");
+  if (!hasLegacyHost && !hasHosts) {
+    issues.push(issue(IssueCode.MissingField, pointer(path, "hosts"), "Required rule field is missing."));
+  }
+
+  const { id, name, matchType, routeMode, enabled, source } = input;
   const notes = hasOwn(input, "notes") ? input.notes : null;
-  let canonicalHost = null;
+  let canonicalHosts = null;
+
+  if (hasHosts) {
+    canonicalHosts = parseHostsField(input.hosts, path, issues);
+  } else if (hasLegacyHost) {
+    canonicalHosts = parseHostList([input.host], path, "host", issues);
+  }
+
+  if (hasLegacyHost && hasHosts && canonicalHosts) {
+    const legacy = normalizeHost(input.host);
+    if (!legacy.ok) {
+      issues.push(issue(IssueCode.InvalidHost, pointer(path, "host"), legacy.error.message,
+        { hostError: legacy.error.code }));
+    } else if (legacy.host !== canonicalHosts[0]) {
+      issues.push(issue(IssueCode.InvalidType, pointer(path, "hosts"),
+        "host must match hosts[0] when both are present."));
+    }
+  }
 
   if (hasOwn(input, "id") &&
       (typeof id !== "string" || id.length === 0 || id.length > Limits.maxIdLength || !ID_PATTERN.test(id))) {
@@ -51,16 +74,6 @@ export function validateRule(input, path = "") {
         NAME_FORBIDDEN.test(name))) {
     issues.push(issue(IssueCode.InvalidName, pointer(path, "name"),
       "Rule name must be a non-blank string up to 120 characters without control characters."));
-  }
-
-  if (hasOwn(input, "host")) {
-    const normalized = normalizeHost(host);
-    if (normalized.ok) {
-      canonicalHost = normalized.host;
-    } else {
-      issues.push(issue(IssueCode.InvalidHost, pointer(path, "host"), normalized.error.message,
-        { hostError: normalized.error.code }));
-    }
   }
 
   if (hasOwn(input, "matchType") && !MATCH_TYPES.includes(matchType)) {
@@ -95,13 +108,50 @@ export function validateRule(input, path = "") {
   return result(Object.freeze({
     id,
     name,
-    host: canonicalHost,
+    hosts: canonicalHosts,
+    host: canonicalHosts[0],
     matchType,
     routeMode,
     enabled,
     source,
     notes
   }), issues);
+}
+
+function parseHostsField(value, path, issues) {
+  if (!Array.isArray(value)) {
+    issues.push(issue(IssueCode.InvalidType, pointer(path, "hosts"), "hosts must be an array."));
+    return null;
+  }
+  if (value.length === 0) {
+    issues.push(issue(IssueCode.InvalidHost, pointer(path, "hosts"), "At least one host is required."));
+    return null;
+  }
+  return parseHostList(value, path, "hosts", issues);
+}
+
+function parseHostList(entries, path, field, issues) {
+  const canonical = [];
+  const seen = new Set();
+  for (let index = 0; index < entries.length; index++) {
+    const entryPath = field === "hosts" ? pointer(path, field) + "/" + index : pointer(path, field);
+    const raw = entries[index];
+    const normalized = normalizeHost(raw);
+    if (!normalized.ok) {
+      issues.push(issue(IssueCode.InvalidHost, entryPath, normalized.error.message,
+        { hostError: normalized.error.code }));
+      continue;
+    }
+    if (!seen.has(normalized.host)) {
+      seen.add(normalized.host);
+      canonical.push(normalized.host);
+    }
+  }
+  if (field === "hosts" && canonical.length === 0 &&
+      !issues.some((entry) => entry.path === pointer(path, "hosts"))) {
+    issues.push(issue(IssueCode.InvalidHost, pointer(path, "hosts"), "At least one host is required."));
+  }
+  return canonical.length > 0 ? Object.freeze(canonical) : null;
 }
 
 function result(rule, issues) {

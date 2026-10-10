@@ -57,8 +57,10 @@ export function compilePacScript(state, options) {
   for (const rule of canonical.rules) {
     if (!rule.enabled) continue;
     const route = rule.routeMode === RouteMode.Default ? canonical.defaultRoute : rule.routeMode;
-    const entry = { host: rule.host, code: ROUTE_CODE[route], labels: rule.host.split(".").length };
-    (rule.matchType === MatchType.ExactHost ? exact : domain).push(entry);
+    const table = rule.matchType === MatchType.ExactHost ? exact : domain;
+    for (const host of rule.hosts) {
+      table.push({ host, code: ROUTE_CODE[route], labels: host.split(".").length });
+    }
   }
   exact.sort((a, b) => compareText(a.host, b.host));
   domain.sort((a, b) => b.labels - a.labels || compareText(a.host, b.host));

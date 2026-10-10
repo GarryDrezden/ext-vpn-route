@@ -1,8 +1,10 @@
 // Portable publish of the production native host + protocol smoke test.
 //
-//   dist/native-host/SelectiveVpnRouter.NativeHost.exe   (self-contained, single file, win-x64)
+//   dist/native-host-staging/SelectiveVpnRouter.NativeHost.exe   (build output; safe while live host runs)
+//   dist/native-host/SelectiveVpnRouter.NativeHost.exe           (registered live path; deploy-staged.ps1)
 //
-// Does not touch the registry: registration is scripts/native-host/register.ps1.
+// Does not touch the registry or dist/native-host during publish: registration is register.ps1;
+// live replacement while the browser holds connectNative is deploy-staged.ps1 (installer).
 //
 // Usage: node scripts/build-native-host.js [--skip-publish] [--tests]
 //   --skip-publish  only validate and smoke-test an existing dist/native-host
@@ -16,9 +18,14 @@ import { fileURLToPath } from "node:url";
 import { createNativeStateProvider } from "../src/extension/state/native-state-provider.js";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-export const HOST_OUT = path.join(ROOT, "dist", "native-host");
+/** Registered live directory (may be locked while connectNative session is open). */
+export const HOST_LIVE_OUT = path.join(ROOT, "dist", "native-host");
+/** Build/publish target; never deleted during a running live host. */
+export const HOST_STAGING_OUT = path.join(ROOT, "dist", "native-host-staging");
+/** @deprecated alias */ export const HOST_OUT = HOST_LIVE_OUT;
 export const HOST_EXE_NAME = "SelectiveVpnRouter.NativeHost.exe";
-export const HOST_EXE = path.join(HOST_OUT, HOST_EXE_NAME);
+export const HOST_EXE = path.join(HOST_LIVE_OUT, HOST_EXE_NAME);
+export const HOST_STAGING_EXE = path.join(HOST_STAGING_OUT, HOST_EXE_NAME);
 export const ALLOWED_ORIGIN = "chrome-extension://lfaekfalhkgmbfdjjlfcalanhijeaien/";
 const PROJECT = path.join(ROOT, "src", "native-host", "SelectiveVpnRouter.NativeHost.csproj");
 const TEST_PROJECT = path.join(ROOT, "tests", "native-host", "SelectiveVpnRouter.NativeHost.Tests.csproj");
@@ -35,8 +42,8 @@ export function hostEnv(pipeName) {
 }
 
 function publish() {
-  rmSync(HOST_OUT, { recursive: true, force: true });
-  mkdirSync(HOST_OUT, { recursive: true });
+  rmSync(HOST_STAGING_OUT, { recursive: true, force: true });
+  mkdirSync(HOST_STAGING_OUT, { recursive: true });
   execFileSync("dotnet", [
     "publish", PROJECT,
     "-c", "Release",
@@ -44,18 +51,18 @@ function publish() {
     "--self-contained", "true",
     "-p:PublishSingleFile=true",
     "-p:DebugType=none",
-    "-o", HOST_OUT,
+    "-o", HOST_STAGING_OUT,
     "--nologo"
   ], { stdio: "inherit" });
 }
 
-function validateOutput() {
-  if (!existsSync(HOST_EXE)) throw new Error("Published host not found: " + HOST_EXE);
-  const files = readdirSync(HOST_OUT).sort();
+function validateOutput(exe = HOST_STAGING_EXE, outDir = HOST_STAGING_OUT) {
+  if (!existsSync(exe)) throw new Error("Published host not found: " + exe);
+  const files = readdirSync(outDir).sort();
   if (files.length !== 1 || files[0] !== HOST_EXE_NAME) {
-    throw new Error("dist/native-host must contain only " + HOST_EXE_NAME + "; found " + files.join(", "));
+    throw new Error(outDir + " must contain only " + HOST_EXE_NAME + "; found " + files.join(", "));
   }
-  return statSync(HOST_EXE).size;
+  return statSync(exe).size;
 }
 
 function frame(message) {
@@ -174,7 +181,7 @@ export async function smoke(exe = HOST_EXE) {
 function runTests() {
   execFileSync("dotnet", ["test", TEST_PROJECT, "-c", "Release", "--nologo"], {
     stdio: "inherit",
-    env: { ...process.env, NATIVE_HOST_EXE: HOST_EXE }
+    env: { ...process.env, NATIVE_HOST_EXE: HOST_STAGING_EXE }
   });
 }
 
@@ -187,10 +194,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (process.platform !== "win32") throw new Error("The native host is published for win-x64 only.");
     if (!args.has("--skip-publish")) publish();
     const size = validateOutput();
-    console.log("Published " + HOST_EXE);
+    console.log("Published " + HOST_STAGING_EXE);
+    console.log("  live path (deploy only): " + HOST_EXE);
     console.log("  size: " + size + " bytes (" + (size / 1024 / 1024).toFixed(1) + " MiB), self-contained single file, win-x64");
     console.log("Protocol smoke test:");
-    await smoke();
+    await smoke(HOST_STAGING_EXE);
     if (args.has("--tests")) runTests();
     console.log("NATIVE HOST BUILD OK (registry not modified)");
   })().catch((error) => {
