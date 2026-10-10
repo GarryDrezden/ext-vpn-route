@@ -127,16 +127,6 @@ function Assert-ManifestPointsToExecutable {
     }
 }
 
-function Invoke-VpnRouteNativeHostMaintenanceScript {
-    param(
-        [Parameter(Mandatory = $true)][string]$ScriptPath,
-        [object[]]$ScriptParameters = @()
-    )
-
-    # In-process .ps1 calls have no native exit code under Set-StrictMode Latest; rely on throw / ErrorAction Stop.
-    & $ScriptPath @ScriptParameters
-}
-
 function Restore-VpnRouteNativeHostRegistration {
     param(
         [string]$RegisterTarget = 'Chrome',
@@ -148,10 +138,15 @@ function Restore-VpnRouteNativeHostRegistration {
     Write-Host 'Attempting native host registration restore after failure...'
     try {
         if ($LiveExecutablePath) {
-            Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $registerScript -ScriptParameters @('-Target', $RegisterTarget, '-LiveExecutablePath', $restoreExe)
+            Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $registerScript -BoundParameters @{
+                Target             = $RegisterTarget
+                LiveExecutablePath = $restoreExe
+            }
         }
         else {
-            Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $registerScript -ScriptParameters @('-Target', $RegisterTarget)
+            Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $registerScript -BoundParameters @{
+                Target = $RegisterTarget
+            }
         }
     }
     catch {
@@ -173,13 +168,18 @@ $unregisterTarget = if ($Target -eq 'Chrome') { 'All' } else { $Target }
 $unregistered = $false
 try {
     Write-Host "Deploy staged native host -> $liveDir (versioned exe)"
-    Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $unregisterScript -ScriptParameters @('-Target', $unregisterTarget)
+    Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $unregisterScript -BoundParameters @{
+        Target = $unregisterTarget
+    }
     $unregistered = $true
 
     $newExecutablePath = Publish-StagedNativeHostExecutable -StagingExecutablePath $staging -LiveDirectory $liveDir
     Write-Host "Published live binary: $newExecutablePath"
 
-    Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $registerScript -ScriptParameters @('-Target', $Target, '-LiveExecutablePath', $newExecutablePath)
+    Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $registerScript -BoundParameters @{
+        Target             = $Target
+        LiveExecutablePath = $newExecutablePath
+    }
     Assert-ManifestPointsToExecutable -ExpectedExecutablePath $newExecutablePath
     $registrationVerified = $true
 

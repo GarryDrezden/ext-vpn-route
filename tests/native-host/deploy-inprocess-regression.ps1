@@ -3,14 +3,6 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot '..\..\scripts\native-host\common.ps1')
 
-function Invoke-VpnRouteNativeHostMaintenanceScript {
-    param(
-        [Parameter(Mandatory = $true)][string]$ScriptPath,
-        [object[]]$ScriptParameters = @()
-    )
-    & $ScriptPath @ScriptParameters
-}
-
 $tempDir = Join-Path $env:TEMP ("vpnroute-deploy-regression-" + [Guid]::NewGuid().ToString('n'))
 [void][IO.Directory]::CreateDirectory($tempDir)
 try {
@@ -19,8 +11,7 @@ try {
 Write-Host 'UNREGISTER OK'
 '@ | Set-Content -LiteralPath $okScript -Encoding UTF8
 
-    Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $okScript -ScriptParameters @()
-    # Under StrictMode Latest, reading $LASTEXITCODE here would throw if unset (live installer failure shape).
+    Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $okScript -BoundParameters @{}
 
     $failScript = Join-Path $tempDir 'stub-fail.ps1'
     @'
@@ -29,7 +20,7 @@ throw 'stub terminating error'
 
     $caught = $false
     try {
-        Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $failScript
+        Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $failScript -BoundParameters @{}
         throw 'expected stub script to throw'
     }
     catch {
@@ -38,16 +29,15 @@ throw 'stub terminating error'
     }
     if (-not $caught) { throw 'terminating error did not propagate' }
 
-    # Mirror deploy-staged.ps1 recovery guard after unregister, before registrationVerified.
     $unregistered = $false
     $registrationVerified = $false
     $oldPaths = [string[]]@((Join-Path $tempDir 'SelectiveVpnRouter.NativeHost.old.exe'))
     New-Item -ItemType File -Path $oldPaths[0] -Force | Out-Null
     $restoreInvoked = $false
     try {
-        Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $okScript
+        Invoke-VpnRouteNativeHostMaintenanceScript -ScriptPath $okScript -BoundParameters @{}
         $unregistered = $true
-        throw "simulated failure immediately after unregister (no `$LASTEXITCODE check)"
+        throw 'simulated failure immediately after unregister'
     }
     catch {
         if ($unregistered -and -not $registrationVerified) {

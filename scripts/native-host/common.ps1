@@ -54,6 +54,16 @@ function Get-CollectionCount {
     return $count
 }
 
+function Invoke-VpnRouteNativeHostMaintenanceScript {
+    param(
+        [Parameter(Mandatory = $true)][string]$ScriptPath,
+        [hashtable]$BoundParameters = @{}
+    )
+
+    # Hashtable splatting binds named parameters; string arrays like @('-Target','All') bind positionally (Target = '-Target').
+    & $ScriptPath @BoundParameters
+}
+
 function Get-HostTargets {
     param([string]$Target)
 

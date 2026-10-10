@@ -28,7 +28,8 @@ test("build publishes to staging, not live dist", () => {
 test("deploy uses versioned live exe so connectNative cannot lock promotion", () => {
   assert.match(deployPs1, /Publish-StagedNativeHostExecutable/);
   assert.match(deployPs1, /SelectiveVpnRouter\.NativeHost\.\$stamp\.exe/);
-  assert.match(deployPs1, /'-LiveExecutablePath', \$newExecutablePath/);
+  assert.match(deployPs1, /LiveExecutablePath\s*=\s*\$newExecutablePath/);
+  assert.doesNotMatch(deployPs1, /'-Target',\s*\$/);
   assert.match(deployPs1, /Assert-ManifestPointsToExecutable/);
   assert.match(deployPs1, /Stop-VpnRouteNativeHostProcessesBestEffort/);
   assert.match(deployPs1, /Get-CimInstance Win32_Process/);
@@ -57,4 +58,6 @@ test("common.ps1 defines staging and live executable paths", () => {
   assert.match(commonPs1, /dist\\native-host\\SelectiveVpnRouter\.NativeHost\.exe/);
   assert.match(commonPs1, /NativeHostProcessFileName/);
   assert.match(commonPs1, /ConvertTo-StringArray/);
+  assert.match(commonPs1, /Invoke-VpnRouteNativeHostMaintenanceScript/);
+  assert.match(commonPs1, /\[hashtable\]\$BoundParameters/);
 });
