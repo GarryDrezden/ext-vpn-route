@@ -4,6 +4,7 @@ import {
   BROWSER_ROUTING_PUSH_CAP,
   EXPECTED_CAPS,
   REQUIRE_PUSH_FLAG,
+  REQUIRE_LIVE_SERVICE_FLAG,
   checkIntegrationCapabilities,
   parseVerifyArgv
 } from "../scripts/verify-browser-integration-readonly.js";
@@ -19,6 +20,12 @@ test("parseVerifyArgv: exe path only", () => {
 test("parseVerifyArgv: require push flag", () => {
   const parsed = parseVerifyArgv(["node", "verify.js", REQUIRE_PUSH_FLAG, "host.exe"]);
   assert.equal(parsed.requireBrowserRoutingPush, true);
+  assert.equal(parsed.exePath, "host.exe");
+});
+
+test("parseVerifyArgv: require live service flag", () => {
+  const parsed = parseVerifyArgv(["node", "verify.js", REQUIRE_LIVE_SERVICE_FLAG, "host.exe"]);
+  assert.equal(parsed.requireLiveService, true);
   assert.equal(parsed.exePath, "host.exe");
 });
 

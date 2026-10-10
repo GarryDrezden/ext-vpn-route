@@ -20,19 +20,23 @@ export const EXPECTED_CAPS = Object.freeze([
 
 export const BROWSER_ROUTING_PUSH_CAP = "browserRoutingPush";
 export const REQUIRE_PUSH_FLAG = "--require-browser-routing-push";
+export const REQUIRE_LIVE_SERVICE_FLAG = "--require-live-service";
 
 /** @param {string[]} argv process.argv */
 export function parseVerifyArgv(argv) {
   let requireBrowserRoutingPush = false;
+  let requireLiveService = false;
   let exePath = null;
   for (const arg of argv.slice(2)) {
     if (arg === REQUIRE_PUSH_FLAG) {
       requireBrowserRoutingPush = true;
+    } else if (arg === REQUIRE_LIVE_SERVICE_FLAG) {
+      requireLiveService = true;
     } else if (!arg.startsWith("-")) {
       exePath = arg;
     }
   }
-  return { requireBrowserRoutingPush, exePath };
+  return { requireBrowserRoutingPush, requireLiveService, exePath };
 }
 
 /**
@@ -58,7 +62,7 @@ export function checkIntegrationCapabilities(capabilities, options = {}) {
 }
 
 async function main() {
-  const { requireBrowserRoutingPush, exePath } = parseVerifyArgv(process.argv);
+  const { requireBrowserRoutingPush, requireLiveService, exePath } = parseVerifyArgv(process.argv);
   const exe = exePath ? path.resolve(exePath) : HOST_EXE;
   const env = { ...process.env };
   delete env[TEST_PIPE_VARIABLE];
@@ -78,6 +82,9 @@ async function main() {
   const result = await provider.getSnapshot();
   if (!result.ok) {
     if (result.transport === "AVAILABLE" && result.service === "UNAVAILABLE") {
+      if (requireLiveService) {
+        throw new Error("Service UNAVAILABLE but live service verification was required.");
+      }
       console.warn("WARN  Service UNAVAILABLE; host bridge OK (read-only verify partial).");
       return;
     }
@@ -96,6 +103,9 @@ async function main() {
   const listed = [...EXPECTED_CAPS];
   if (capCheck.hasPush) listed.push(BROWSER_ROUTING_PUSH_CAP);
   console.log("PASS  capabilities:", listed.join(", "));
+  if (capCheck.hasPush) {
+    console.log("PASS  browserRoutingPush capability verified");
+  }
   if (capCheck.pushOptionalMissing) {
     console.warn("WARN  optional capability missing: " + BROWSER_ROUTING_PUSH_CAP + " (older Service; full 1.0.0 install requires it)");
   }

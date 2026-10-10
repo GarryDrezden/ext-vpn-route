@@ -3,8 +3,8 @@
     <!-- Keep in sync with version/product-version.json (extension repo SSOT for Node + Native Host). -->
     <VpnRouteProductVersion>1.0.0</VpnRouteProductVersion>
     <VpnRouteReleaseChannel>RC</VpnRouteReleaseChannel>
-    <VpnRouteReleaseRevision>16</VpnRouteReleaseRevision>
-    <Version>$(VpnRouteProductVersion)</Version>
+    <VpnRouteReleaseRevision>17</VpnRouteReleaseRevision>
+    <Version>$(VpnRouteProductVersion).$(VpnRouteReleaseRevision)</Version>
     <AssemblyVersion>$(VpnRouteProductVersion).$(VpnRouteReleaseRevision)</AssemblyVersion>
     <FileVersion>$(VpnRouteProductVersion).$(VpnRouteReleaseRevision)</FileVersion>
     <InformationalVersion Condition="'$(VpnRouteReleaseChannel)' != '' and '$(VpnRouteReleaseRevision)' != '0'">$(VpnRouteProductVersion) $(VpnRouteReleaseChannel)$(VpnRouteReleaseRevision)</InformationalVersion>

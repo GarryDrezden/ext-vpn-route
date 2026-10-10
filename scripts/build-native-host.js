@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createNativeStateProvider } from "../src/extension/state/native-state-provider.js";
+import { loadProductVersion } from "./product-version.js";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 /** Registered live directory (may be locked while connectNative session is open). */
@@ -42,6 +43,7 @@ export function hostEnv(pipeName) {
 }
 
 function publish() {
+  const product = loadProductVersion();
   rmSync(HOST_STAGING_OUT, { recursive: true, force: true });
   mkdirSync(HOST_STAGING_OUT, { recursive: true });
   execFileSync("dotnet", [
@@ -51,9 +53,23 @@ function publish() {
     "--self-contained", "true",
     "-p:PublishSingleFile=true",
     "-p:DebugType=none",
+    `-p:Version=${product.numericVersion}`,
+    `-p:FileVersion=${product.numericVersion}`,
+    `-p:AssemblyVersion=${product.numericVersion}`,
+    `-p:InformationalVersion=${product.displayVersion}`,
     "-o", HOST_STAGING_OUT,
     "--nologo"
   ], { stdio: "inherit" });
+}
+
+/** @param {string} exe @param {string} expectedFileVersion */
+export function readWindowsFileVersion(exe) {
+  const escaped = exe.replace(/'/g, "''");
+  return execFileSync(
+    "powershell.exe",
+    ["-NoProfile", "-Command", `(Get-Item -LiteralPath '${escaped}').VersionInfo.FileVersion`],
+    { encoding: "utf8" }
+  ).trim();
 }
 
 function validateOutput(exe = HOST_STAGING_EXE, outDir = HOST_STAGING_OUT) {
@@ -61,6 +77,13 @@ function validateOutput(exe = HOST_STAGING_EXE, outDir = HOST_STAGING_OUT) {
   const files = readdirSync(outDir).sort();
   if (files.length !== 1 || files[0] !== HOST_EXE_NAME) {
     throw new Error(outDir + " must contain only " + HOST_EXE_NAME + "; found " + files.join(", "));
+  }
+  if (process.platform === "win32") {
+    const expected = loadProductVersion().numericVersion;
+    const actual = readWindowsFileVersion(exe);
+    if (actual !== expected) {
+      throw new Error(`Native host FileVersion is ${actual}; expected ${expected}`);
+    }
   }
   return statSync(exe).size;
 }

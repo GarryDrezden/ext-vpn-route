@@ -18,6 +18,8 @@ const registerPs1 = readFileSync(path.join(ROOT, "scripts/native-host/register.p
 test("build publishes to staging, not live dist", () => {
   assert.match(buildJs, /HOST_STAGING_OUT/);
   assert.match(buildJs, /"-o", HOST_STAGING_OUT/);
+  assert.match(buildJs, /`-p:FileVersion=\$\{product\.numericVersion\}`/);
+  assert.match(buildJs, /Native host FileVersion is/);
   assert.doesNotMatch(buildJs, /rmSync\(HOST_LIVE_OUT/);
   assert.equal(HOST_STAGING_OUT.includes("native-host-staging"), true);
   assert.equal(HOST_LIVE_OUT.includes("native-host-staging"), false);

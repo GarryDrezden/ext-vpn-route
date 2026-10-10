@@ -127,18 +127,35 @@ test("read-only verify script avoids write RPC names", () => {
   assert.match(js, /--require-browser-routing-push/);
 });
 
-test("full install requires browserRoutingPush verify flag; CheckOnly does not", (t) => {
+test("full install uses pre-update snapshot for integration verify intent", (t) => {
   if (!existsSync(INSTALL_PS1) || !existsSync(HELPERS_PS1)) t.skip("gateway scripts missing");
   const install = readFileSync(INSTALL_PS1, "utf8");
   const helpers = readFileSync(HELPERS_PS1, "utf8");
-  assert.match(helpers, /RequireBrowserRoutingPush/);
+  assert.match(install, /Get-SvrPublishRuntimeSnapshot/);
+  assert.match(install, /-PreUpdateSnapshot \$preUpdateRuntimeSnapshot/);
+  assert.doesNotMatch(install, /-RequireBrowserRoutingPush/);
+  assert.match(helpers, /function Invoke-VpnRouteNodeCommand/);
   assert.match(helpers, /--require-browser-routing-push/);
-  assert.match(install, /Invoke-VpnRouteReadOnlyIntegrationVerify -ExtensionRoot \$extensionRoot -RequireBrowserRoutingPush/);
+  assert.match(helpers, /--require-live-service/);
+  assert.match(helpers, /integration API live verify/);
+  assert.match(helpers, /product service intentionally preserved stopped/);
+  assert.match(helpers, /product service was expected Running after update/);
   const checkStart = install.indexOf("if ($CheckOnly)");
   const checkEnd = install.indexOf("exit 0", checkStart);
   const checkBlock = install.slice(checkStart, checkEnd);
   assert.match(checkBlock, /Invoke-VpnRouteReadOnlyIntegrationVerify -ExtensionRoot \$extensionRoot/);
-  assert.doesNotMatch(checkBlock, /RequireBrowserRoutingPush/);
+  assert.doesNotMatch(checkBlock, /PreUpdateSnapshot/);
+});
+
+test("Invoke-VpnRouteNodeCommand captures stderr without Stop preference failure", (t) => {
+  const regression = path.join(ROOT, "tests/native-host/install-verify-node-invocation-regression.ps1");
+  if (!existsSync(HELPERS_PS1)) t.skip("gateway helpers missing");
+  const out = execFileSync(
+    "powershell.exe",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", regression],
+    { encoding: "utf8", env: { ...process.env, VPN_GATEWAY_ROOT: GATEWAY_ROOT } }
+  );
+  assert.match(out, /PASS install-verify-node-invocation-regression/);
 });
 
 test("verify script does not use chrome.storage.local for drafts", () => {
