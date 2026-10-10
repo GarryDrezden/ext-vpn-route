@@ -58,7 +58,7 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
 
     private static readonly HashSet<string> RuleFields = new(StringComparer.Ordinal)
     {
-        "id", "name", "host", "matchType", "routeMode", "enabled", "source", "notes"
+        "id", "name", "host", "hosts", "matchType", "routeMode", "enabled", "source", "notes"
     };
 
     private static readonly HashSet<string> ManifestOptionalFields = new(StringComparer.Ordinal)
@@ -187,7 +187,7 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
         if (!TryReadInteger(root.GetProperty("expectedRevision"), ProtocolV1.MaxRevision, out var expectedRevision))
             return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
         var rule = root.GetProperty("rule");
-        if (rule.ValueKind != JsonValueKind.Object || !HasOnlyFields(rule, RuleFields))
+        if (rule.ValueKind != JsonValueKind.Object || !HasOnlyFields(rule, RuleFields) || !IsValidUpsertRule(rule))
             return Fail(requestId, command, ProtocolV1.Errors.InvalidRequest);
 
         var call = await CallAsync(requestId, command,
@@ -412,6 +412,49 @@ internal sealed class RequestDispatcher(IServiceStateClient serviceClient, TimeS
 
     private static DispatchResult Fail(string? requestId, string command, string code, string? detail = null, long? currentRevision = null) =>
         new(ResponseWriter.Error(requestId, code, currentRevision), command, detail is null ? code : $"{code} ({detail})");
+
+    private static bool IsValidUpsertRule(JsonElement rule)
+    {
+        if (!rule.TryGetProperty("id", out var id) || id.ValueKind != JsonValueKind.String ||
+            string.IsNullOrEmpty(id.GetString()) || id.GetString()!.Length > 128)
+            return false;
+        if (!rule.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String ||
+            string.IsNullOrEmpty(name.GetString()) || name.GetString()!.Length > 256)
+            return false;
+        if (!rule.TryGetProperty("host", out var host) || host.ValueKind != JsonValueKind.String ||
+            string.IsNullOrEmpty(host.GetString()) || host.GetString()!.Length > 253)
+            return false;
+        if (!rule.TryGetProperty("matchType", out var matchType) || matchType.ValueKind != JsonValueKind.String ||
+            matchType.GetString() is not ("ExactHost" or "DomainAndSubdomains"))
+            return false;
+        if (!rule.TryGetProperty("routeMode", out var routeMode) || routeMode.ValueKind != JsonValueKind.String ||
+            routeMode.GetString() is not ("Direct" or "VPN"))
+            return false;
+        if (!rule.TryGetProperty("enabled", out var enabled) || enabled.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            return false;
+        if (!rule.TryGetProperty("source", out var source) || source.ValueKind != JsonValueKind.String ||
+            string.IsNullOrEmpty(source.GetString()) || source.GetString()!.Length > 64)
+            return false;
+        if (!rule.TryGetProperty("notes", out var notes) ||
+            notes.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+            return false;
+        if (notes.ValueKind == JsonValueKind.String && notes.GetString()!.Length > 4096)
+            return false;
+
+        if (!rule.TryGetProperty("hosts", out var hosts))
+            return true;
+
+        if (hosts.ValueKind != JsonValueKind.Array || hosts.GetArrayLength() is < 1 or > 64)
+            return false;
+        foreach (var entry in hosts.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(entry.GetString()) ||
+                entry.GetString()!.Length > 253)
+                return false;
+        }
+
+        return string.Equals(host.GetString(), hosts[0].GetString(), StringComparison.Ordinal);
+    }
 
     private static bool HasOnlyFields(JsonElement root, HashSet<string> allowed)
     {

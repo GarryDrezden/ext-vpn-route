@@ -1,6 +1,6 @@
 import { MatchType, RouteMode } from "../../domain/browser-routing/constants.js";
 import { formatRuleHostsLabel, labelMatchType, labelRouteMode } from "./rules-labels.js";
-import { buildUserRule, generateRuleId } from "./rule-form-helpers.js";
+import { buildUserRule, generateRuleId, prepareRuleForUpsert } from "./rule-form-helpers.js";
 import {
   createChromeSessionDraftStore,
   draftHasUserContent,
@@ -452,7 +452,7 @@ export function createRulesUi(deps) {
   }
 
   async function toggleRule(rule) {
-    await mutate("upsert", { rule: { ...rule, enabled: !rule.enabled } });
+    await mutate("upsert", { rule: prepareRuleForUpsert(rule, { enabled: !rule.enabled }) });
   }
 
   function openConfirmBar(text, action, ruleId) {

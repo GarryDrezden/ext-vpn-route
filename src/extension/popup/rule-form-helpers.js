@@ -56,6 +56,28 @@ export function hostsFromUserInput(raw) {
   return { ok: true, hosts: Object.freeze(hosts) };
 }
 
+/** Canonical upsert payload for Native Host v1 (includes multi-domain hosts[]). */
+export function prepareRuleForUpsert(rule, patch = {}) {
+  const hosts = Array.isArray(rule.hosts) && rule.hosts.length > 0
+    ? [...rule.hosts]
+    : (typeof rule.host === "string" && rule.host ? [rule.host] : []);
+  if (hosts.length === 0) {
+    throw new Error("Rule has no hosts for upsert.");
+  }
+  return Object.freeze({
+    id: rule.id,
+    name: rule.name,
+    hosts: Object.freeze(hosts),
+    host: hosts[0],
+    matchType: rule.matchType,
+    routeMode: rule.routeMode,
+    enabled: rule.enabled,
+    source: rule.source,
+    notes: rule.notes ?? null,
+    ...patch
+  });
+}
+
 export function buildUserRule(fields, existingId) {
   const id = existingId || generateRuleId();
   if (typeof id !== "string" || !/^rule-[a-z0-9_-]+$/.test(id)) {

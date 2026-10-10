@@ -4,6 +4,7 @@ import {
   WriterErrorCode,
   syncAfterBrowserRoutingWrite
 } from "../state/browser-routing-write-contract.js";
+import { prepareRuleForUpsert } from "../popup/rule-form-helpers.js";
 
 export const RulesMessage = Object.freeze({
   writeUnsupported: "Текущая версия VPN Route не поддерживает изменение правил из расширения.",
@@ -103,7 +104,11 @@ export async function executeRulesMutation(deps, action, payload) {
 
   let writeResult;
   if (action === "upsert") {
-    writeResult = await deps.writer.upsertRule({ integration, expectedRevision, rule: payload.rule });
+    writeResult = await deps.writer.upsertRule({
+      integration,
+      expectedRevision,
+      rule: prepareRuleForUpsert(payload.rule)
+    });
   } else if (action === "delete") {
     writeResult = await deps.writer.deleteRule({ integration, expectedRevision, id: payload.id });
   } else if (action === "reset") {

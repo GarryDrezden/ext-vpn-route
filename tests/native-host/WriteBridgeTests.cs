@@ -17,6 +17,44 @@ public class WriteBridgeTests
     private const string SampleRule =
         """{"id":"rule-1","name":"Example","host":"example.com","matchType":"ExactHost","routeMode":"VPN","enabled":true,"source":"User","notes":null}""";
 
+    private const string MultiHostRule =
+        """{"id":"rule-yt","name":"YouTube","host":"youtube.com","hosts":["youtube.com","youtu.be","googlevideo.com"],"matchType":"DomainAndSubdomains","routeMode":"VPN","enabled":false,"source":"User","notes":null}""";
+
+    [Fact]
+    public async Task UpsertRule_AcceptsMultiDomainHostsArray()
+    {
+        string? capturedRuleJson = null;
+        var client = FakeServiceClient.WithWrites(SampleService.ManifestReply(), (_, rule) =>
+        {
+            capturedRuleJson = rule.GetRawText();
+            return SampleService.WriteReply(14);
+        });
+        var response = await SendAsync(
+            $$"""{"protocolVersion":1,"requestId":"w-mh","command":"upsertRule","expectedRevision":13,"rule":{{MultiHostRule}}}""", client);
+
+        Assert.True(response.GetProperty("ok").GetBoolean());
+        Assert.NotNull(capturedRuleJson);
+        using var captured = JsonDocument.Parse(capturedRuleJson!);
+        var root = captured.RootElement;
+        var hosts = root.GetProperty("hosts");
+        Assert.Equal(3, hosts.GetArrayLength());
+        Assert.Equal("youtube.com", hosts[0].GetString());
+        Assert.Equal("DomainAndSubdomains", root.GetProperty("matchType").GetString());
+    }
+
+    [Fact]
+    public async Task UpsertRule_RejectsUnknownRuleField()
+    {
+        var client = FakeServiceClient.WithWrites(SampleService.ManifestReply(), (_, _) => SampleService.WriteReply(2));
+        var response = await SendAsync(
+            """{"protocolVersion":1,"requestId":"w-bad","command":"upsertRule","expectedRevision":1,"rule":{"id":"rule-1","name":"X","host":"a.com","hosts":["a.com"],"extra":1,"matchType":"ExactHost","routeMode":"VPN","enabled":true,"source":"User","notes":null}}""",
+            client);
+
+        Assert.False(response.GetProperty("ok").GetBoolean());
+        Assert.Equal(ProtocolV1.Errors.InvalidRequest, ErrorCode(response));
+        Assert.Equal(0, client.Calls);
+    }
+
     [Fact]
     public async Task UpsertRule_ForwardsExpectedRevisionAndRulePayload()
     {

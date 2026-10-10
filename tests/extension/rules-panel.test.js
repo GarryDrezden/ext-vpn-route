@@ -144,6 +144,81 @@ describe("executeRulesMutation", () => {
     };
   }
 
+  test("multi-domain disabled rule toggle ON sends hosts[] with expectedRevision", async () => {
+    const multiRule = Object.freeze({
+      id: "rule-multi",
+      name: "YouTube",
+      host: "youtube.com",
+      hosts: ["youtube.com", "youtu.be"],
+      matchType: MatchType.DomainAndSubdomains,
+      routeMode: RouteMode.VPN,
+      enabled: false,
+      source: RuleSource.User,
+      notes: null
+    });
+    let captured = null;
+    const d = deps({
+      rules: [multiRule],
+      upsertRule: async ({ expectedRevision, rule }) => {
+        captured = { expectedRevision, rule };
+        return {
+          ok: true,
+          result: { stateGeneration: GEN_A, revision: 6, defaultRoute: "Direct", ruleCount: 1 }
+        };
+      }
+    });
+    const result = await executeRulesMutation(d, "upsert", {
+      rule: { ...multiRule, enabled: true }
+    });
+    assert.equal(result.ok, true);
+    assert.equal(captured.expectedRevision, 5);
+    assert.deepEqual(captured.rule.hosts, multiRule.hosts);
+    assert.equal(captured.rule.enabled, true);
+    assert.equal(captured.rule.host, "youtube.com");
+  });
+
+  test("toggle OFF preserves hosts unchanged", async () => {
+    const multiRule = Object.freeze({
+      id: "rule-multi",
+      name: "Sites",
+      host: "a.com",
+      hosts: ["a.com", "b.com"],
+      matchType: MatchType.ExactHost,
+      routeMode: RouteMode.VPN,
+      enabled: true,
+      source: RuleSource.User,
+      notes: null
+    });
+    let captured = null;
+    const d = deps({
+      rules: [multiRule],
+      upsertRule: async ({ rule }) => {
+        captured = rule;
+        return {
+          ok: true,
+          result: { stateGeneration: GEN_A, revision: 6, defaultRoute: "Direct", ruleCount: 1 }
+        };
+      }
+    });
+    await executeRulesMutation(d, "upsert", { rule: { ...multiRule, enabled: false } });
+    assert.deepEqual(captured.hosts, ["a.com", "b.com"]);
+    assert.equal(captured.enabled, false);
+  });
+
+  test("invalid_request from host surfaces message without auto-retry", async () => {
+    let calls = 0;
+    const d = deps({
+      upsertRule: async () => {
+        calls++;
+        return { ok: false, error: { code: ServiceWriteErrorCode.InvalidRequest, message: "Request envelope is invalid." } };
+      }
+    });
+    const result = await executeRulesMutation(d, "upsert", { rule: sampleRule });
+    assert.equal(calls, 1);
+    assert.equal(result.code, "validation_failed");
+    assert.equal(result.userMessage, "Request envelope is invalid.");
+  });
+
   test("add uses current expectedRevision", async () => {
     const d = deps();
     const newRule = { ...sampleRule, id: "rule-new", host: "new.test" };
