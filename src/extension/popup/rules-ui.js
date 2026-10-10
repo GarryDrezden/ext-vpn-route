@@ -251,7 +251,7 @@ export function createRulesUi(deps) {
     const actions = document.createElement("div");
     actions.className = "rule-card-actions";
 
-    if (panel.writable && !mutationPending) {
+    if (panel.writable) {
       const toggleLabel = document.createElement("label");
       toggleLabel.className = "switch switch-compact";
       toggleLabel.title = rule.enabled ? "Выключить правило" : "Включить правило";
@@ -260,6 +260,7 @@ export function createRulesUi(deps) {
       toggleInput.className = "switch-input";
       toggleInput.checked = rule.enabled;
       toggleInput.setAttribute("aria-label", rule.enabled ? "Правило включено" : "Правило выключено");
+      toggleInput.disabled = mutationPending;
       toggleInput.addEventListener("change", () => toggleRule(rule));
       toggleLabel.appendChild(toggleInput);
       const track = document.createElement("span");
@@ -286,8 +287,6 @@ export function createRulesUi(deps) {
       });
       menu.appendChild(deleteBtn);
       actions.appendChild(menu);
-    } else if (panel.writable) {
-      actions.appendChild(textEl("span", "…", "rule-pending"));
     }
 
     li.appendChild(main);
@@ -369,6 +368,7 @@ export function createRulesUi(deps) {
       return response;
     } finally {
       setControlsDisabled(false);
+      if (panel) renderList();
     }
   }
 
