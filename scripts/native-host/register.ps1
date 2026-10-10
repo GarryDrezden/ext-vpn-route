@@ -2,18 +2,19 @@
 param(
     [ValidateSet('Chrome', 'Chromium', 'All')]
     [string]$Target = 'Chrome',
-    [string]$ExecutablePath = ''
+    [Alias('ExecutablePath')]
+    [string]$LiveExecutablePath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $origin = Get-AllowedOrigin
-$exe = if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
-    [IO.Path]::GetFullPath($script:ExecutablePath)
+if (-not [string]::IsNullOrWhiteSpace($LiveExecutablePath)) {
+    $exe = [IO.Path]::GetFullPath($LiveExecutablePath)
 }
 else {
-    [IO.Path]::GetFullPath($ExecutablePath)
+    $exe = [IO.Path]::GetFullPath($script:ExecutablePath)
 }
 
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
@@ -25,7 +26,7 @@ $json = New-HostManifestJson -ExecutablePath $exe -Origin $origin
 [IO.File]::WriteAllText($script:ManifestPath, $json, (New-Object Text.UTF8Encoding $false))
 
 $problems = Test-HostManifest -Path $script:ManifestPath -ExecutablePath $exe -Origin $origin
-if ($problems.Count -gt 0) {
+if ((Get-CollectionCount $problems) -gt 0) {
     throw "Generated manifest failed verification: $($problems -join '; ')"
 }
 

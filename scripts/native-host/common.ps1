@@ -22,6 +22,38 @@ $script:RegistryTargets = [ordered]@{
     Chromium = "Software\Chromium\NativeMessagingHosts\$script:HostName"
 }
 
+function ConvertTo-StringArray {
+    param([object]$Value)
+
+    # [object[]]@() survives function return under PS 5.1 (bare @() is "no output" -> $null).
+    if ($null -eq $Value) { return [object[]]@() }
+    if ($Value -is [string]) {
+        if ([string]::IsNullOrWhiteSpace($Value)) { return [object[]]@() }
+        return @([string]$Value)
+    }
+    if ($Value -is [System.Collections.IEnumerable]) {
+        $items = @($Value | ForEach-Object {
+            if ($null -eq $_) { return }
+            [string]$_
+        } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($items.Count -eq 0) { return [object[]]@() }
+        return [string[]]$items
+    }
+    return @([string]$Value)
+}
+
+function Get-CollectionCount {
+    param($Value)
+
+    if ($null -eq $Value) { return 0 }
+    if ($Value -is [string]) { return 1 }
+    if ($Value -is [System.Collections.ICollection]) { return $Value.Count }
+
+    $count = 0
+    foreach ($_ in $Value) { $count++ }
+    return $count
+}
+
 function Get-HostTargets {
     param([string]$Target)
 
@@ -121,8 +153,8 @@ function Test-HostManifest {
     if ($manifest.name -cne $script:HostName) { $problems.Add("name is $($manifest.name)") }
     if ($manifest.type -cne 'stdio') { $problems.Add("type is $($manifest.type)") }
     if ($manifest.path -ne $ExecutablePath) { $problems.Add("path is $($manifest.path)") }
-    $origins = @($manifest.allowed_origins)
-    if ($origins.Count -ne 1 -or $origins[0] -cne $Origin) { $problems.Add("allowed_origins is $($origins -join ', ')") }
+    $origins = [string[]](ConvertTo-StringArray $manifest.allowed_origins)
+    if ((Get-CollectionCount $origins) -ne 1 -or $origins[0] -cne $Origin) { $problems.Add("allowed_origins is $($origins -join ', ')") }
     foreach ($o in $origins) {
         if ($o.Contains('*')) { $problems.Add("wildcard origin $o") }
     }

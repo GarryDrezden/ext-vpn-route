@@ -28,26 +28,31 @@ test("build publishes to staging, not live dist", () => {
 test("deploy uses versioned live exe so connectNative cannot lock promotion", () => {
   assert.match(deployPs1, /Publish-StagedNativeHostExecutable/);
   assert.match(deployPs1, /SelectiveVpnRouter\.NativeHost\.\$stamp\.exe/);
-  assert.match(deployPs1, /register\.ps1.*-ExecutablePath \$newExecutablePath/s);
-  assert.doesNotMatch(deployPs1, /did not exit after stop/);
+  assert.match(deployPs1, /-LiveExecutablePath \$newExecutablePath/);
+  assert.match(deployPs1, /Assert-ManifestPointsToExecutable/);
   assert.match(deployPs1, /Stop-VpnRouteNativeHostProcessesBestEffort/);
   assert.match(deployPs1, /Get-CimInstance Win32_Process/);
+  assert.match(deployPs1, /Get-CollectionCount/);
   assert.match(deployPs1, /Old native host process\(es\) still running/);
 });
 
 test("deploy does not kill browser processes; stop is scoped by executable path", () => {
   assert.match(deployPs1, /unregister\.ps1/);
+  assert.match(deployPs1, /registrationVerified/);
   assert.match(deployPs1, /Restore-VpnRouteNativeHostRegistration/);
   assert.doesNotMatch(deployPs1, /Stop-Process\s+-Name\s+['"]?(chrome|yandex|msedge|browser)/i);
   assert.match(deployPs1, /ExecutablePaths/);
 });
 
-test("register.ps1 accepts explicit executable path for versioned deploy", () => {
-  assert.match(registerPs1, /\[string\]\$ExecutablePath/);
+test("register.ps1 uses LiveExecutablePath when explicitly supplied", () => {
+  assert.match(registerPs1, /\[string\]\$LiveExecutablePath/);
+  assert.match(registerPs1, /IsNullOrWhiteSpace\(\$LiveExecutablePath\)/);
+  assert.match(registerPs1, /New-HostManifestJson -ExecutablePath \$exe/);
 });
 
 test("common.ps1 defines staging and live executable paths", () => {
   assert.match(commonPs1, /native-host-staging/);
   assert.match(commonPs1, /dist\\native-host\\SelectiveVpnRouter\.NativeHost\.exe/);
   assert.match(commonPs1, /NativeHostProcessFileName/);
+  assert.match(commonPs1, /ConvertTo-StringArray/);
 });

@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $origin = Get-AllowedOrigin
-$exe = [IO.Path]::GetFullPath($script:ExecutablePath)
+$exe = $null
 if (Test-Path -LiteralPath $script:ManifestPath -PathType Leaf) {
     try {
         $manifest = [IO.File]::ReadAllText($script:ManifestPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
@@ -14,6 +14,9 @@ if (Test-Path -LiteralPath $script:ManifestPath -PathType Leaf) {
         }
     }
     catch { }
+}
+if (-not $exe) {
+    $exe = [IO.Path]::GetFullPath($script:ExecutablePath)
 }
 $exeExists = Test-Path -LiteralPath $exe -PathType Leaf
 $problems = New-Object Collections.Generic.List[string]

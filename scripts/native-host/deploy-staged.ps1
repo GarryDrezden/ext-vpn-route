@@ -13,12 +13,8 @@ $ErrorActionPreference = 'Stop'
 function Get-VpnRouteNativeHostCimProcesses {
     param([string[]]$ExecutablePaths = @())
 
-    $normalized = @(
-        foreach ($p in $ExecutablePaths) {
-            if ([string]::IsNullOrWhiteSpace($p)) { continue }
-            [IO.Path]::GetFullPath($p)
-        }
-    ) | Select-Object -Unique
+    $normalized = [string[]](ConvertTo-StringArray $ExecutablePaths | ForEach-Object { [IO.Path]::GetFullPath($_) } | Select-Object -Unique)
+    $normalized = [string[]](ConvertTo-StringArray $normalized)
 
     $found = @()
     foreach ($proc in Get-CimInstance Win32_Process -Filter "Name='$($script:NativeHostProcessFileName)'" -ErrorAction SilentlyContinue) {
@@ -28,7 +24,7 @@ function Get-VpnRouteNativeHostCimProcesses {
             $full = [IO.Path]::GetFullPath($path)
         }
         catch { continue }
-        if ($normalized.Count -eq 0) {
+        if ((Get-CollectionCount $normalized) -eq 0) {
             if ($full.StartsWith([IO.Path]::GetFullPath((Join-Path $script:RepoRoot 'dist\native-host')), [StringComparison]::OrdinalIgnoreCase)) {
                 $found += $proc
             }
@@ -41,7 +37,7 @@ function Get-VpnRouteNativeHostCimProcesses {
             }
         }
     }
-    return ,$found
+    return ,@($found)
 }
 
 function Stop-VpnRouteNativeHostProcessesBestEffort {
@@ -50,11 +46,14 @@ function Stop-VpnRouteNativeHostProcessesBestEffort {
         [int]$TimeoutSeconds = 12
     )
 
+    $paths = [string[]](ConvertTo-StringArray $ExecutablePaths)
+    if ((Get-CollectionCount $paths) -eq 0) { return }
+
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $stoppedIds = @{}
     while ((Get-Date) -lt $deadline) {
-        $alive = @(Get-VpnRouteNativeHostCimProcesses -ExecutablePaths $ExecutablePaths)
-        if ($alive.Count -eq 0) { return }
+        $alive = Get-VpnRouteNativeHostCimProcesses -ExecutablePaths $paths
+        if ((Get-CollectionCount $alive) -eq 0) { return }
         foreach ($proc in $alive) {
             $pid = [int]$proc.ProcessId
             if ($stoppedIds.ContainsKey($pid)) { continue }
@@ -69,8 +68,8 @@ function Stop-VpnRouteNativeHostProcessesBestEffort {
         }
         Start-Sleep -Milliseconds 250
     }
-    $remaining = @(Get-VpnRouteNativeHostCimProcesses -ExecutablePaths $ExecutablePaths)
-    if ($remaining.Count -gt 0) {
+    $remaining = Get-VpnRouteNativeHostCimProcesses -ExecutablePaths $paths
+    if ((Get-CollectionCount $remaining) -gt 0) {
         $ids = ($remaining | ForEach-Object { $_.ProcessId }) -join ', '
         Write-Warning "Old native host process(es) still running after ${TimeoutSeconds}s (pids: $ids); new version is already registered."
     }
@@ -88,7 +87,7 @@ function Read-RegisteredNativeHostExecutablePaths {
     if (Test-Path -LiteralPath $script:ExecutablePath -PathType Leaf) {
         [void]$paths.Add($script:ExecutablePath)
     }
-    return ,@($paths | Select-Object -Unique)
+    return [string[]](ConvertTo-StringArray ($paths | Select-Object -Unique))
 }
 
 function Publish-StagedNativeHostExecutable {
@@ -112,20 +111,36 @@ function Publish-StagedNativeHostExecutable {
     return [IO.Path]::GetFullPath($target)
 }
 
+function Assert-ManifestPointsToExecutable {
+    param(
+        [Parameter(Mandatory = $true)][string]$ExpectedExecutablePath
+    )
+
+    if (-not (Test-Path -LiteralPath $script:ManifestPath -PathType Leaf)) {
+        throw "Native messaging manifest missing after register: $($script:ManifestPath)"
+    }
+    $manifest = [IO.File]::ReadAllText($script:ManifestPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+    $manifestPath = [IO.Path]::GetFullPath([string]$manifest.path)
+    $expected = [IO.Path]::GetFullPath($ExpectedExecutablePath)
+    if (-not $manifestPath.Equals($expected, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Manifest executable mismatch. Expected: $expected Actual: $manifestPath"
+    }
+}
+
 function Restore-VpnRouteNativeHostRegistration {
     param(
         [string]$RegisterTarget = 'Chrome',
-        [string]$ExecutablePath = ''
+        [string]$LiveExecutablePath = ''
     )
     $registerScript = Join-Path $PSScriptRoot 'register.ps1'
-    $restoreExe = if ($ExecutablePath) { $ExecutablePath } else { $script:ExecutablePath }
+    $restoreExe = if ($LiveExecutablePath) { $LiveExecutablePath } else { $script:ExecutablePath }
     if (-not (Test-Path -LiteralPath $restoreExe -PathType Leaf)) { return }
     Write-Host 'Attempting native host registration restore after failure...'
-    if ($ExecutablePath) {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $registerScript -Target $RegisterTarget -ExecutablePath $restoreExe
+    if ($LiveExecutablePath) {
+        & $registerScript -Target $RegisterTarget -LiveExecutablePath $restoreExe
     }
     else {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $registerScript -Target $RegisterTarget
+        & $registerScript -Target $RegisterTarget
     }
     if ($LASTEXITCODE -ne 0) {
         Write-Warning 'Registration restore failed; run scripts/native-host/register.ps1 manually.'
@@ -138,43 +153,40 @@ $unregisterScript = Join-Path $PSScriptRoot 'unregister.ps1'
 $registerScript = Join-Path $PSScriptRoot 'register.ps1'
 $statusScript = Join-Path $PSScriptRoot 'status.ps1'
 
-$oldExecutablePaths = @(Read-RegisteredNativeHostExecutablePaths)
+$oldExecutablePaths = Read-RegisteredNativeHostExecutablePaths
 $newExecutablePath = $null
+$registrationVerified = $false
 $unregisterTarget = if ($Target -eq 'Chrome') { 'All' } else { $Target }
 $unregistered = $false
 try {
     Write-Host "Deploy staged native host -> $liveDir (versioned exe)"
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $unregisterScript -Target $unregisterTarget
+    & $unregisterScript -Target $unregisterTarget
     if ($LASTEXITCODE -ne 0) { throw "unregister.ps1 failed (exit $LASTEXITCODE)." }
     $unregistered = $true
 
     $newExecutablePath = Publish-StagedNativeHostExecutable -StagingExecutablePath $staging -LiveDirectory $liveDir
     Write-Host "Published live binary: $newExecutablePath"
 
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $registerScript -Target $Target -ExecutablePath $newExecutablePath
+    & $registerScript -Target $Target -LiveExecutablePath $newExecutablePath
     if ($LASTEXITCODE -ne 0) { throw "register.ps1 failed (exit $LASTEXITCODE)." }
+    Assert-ManifestPointsToExecutable -ExpectedExecutablePath $newExecutablePath
+    $registrationVerified = $true
 
-    if ($oldExecutablePaths.Count -gt 0) {
+    if ((Get-CollectionCount $oldExecutablePaths) -gt 0) {
         Stop-VpnRouteNativeHostProcessesBestEffort -ExecutablePaths $oldExecutablePaths
     }
 
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $statusScript
+    & $statusScript
     if ($LASTEXITCODE -ne 0) { throw "status.ps1 reported inconsistent state (exit $LASTEXITCODE)." }
 
     Write-Host 'DEPLOY STAGED NATIVE HOST OK'
 }
 catch {
-    if ($unregistered) {
-        $restorePath = if ($newExecutablePath -and (Test-Path -LiteralPath $newExecutablePath)) {
-            $newExecutablePath
+    if ($unregistered -and -not $registrationVerified) {
+        $oldPaths = [string[]](ConvertTo-StringArray $oldExecutablePaths)
+        if ((Get-CollectionCount $oldPaths) -gt 0) {
+            Restore-VpnRouteNativeHostRegistration -RegisterTarget $Target -LiveExecutablePath $oldPaths[0]
         }
-        elseif ($oldExecutablePaths.Count -gt 0) {
-            $oldExecutablePaths[0]
-        }
-        else {
-            ''
-        }
-        Restore-VpnRouteNativeHostRegistration -RegisterTarget $Target -ExecutablePath $restorePath
     }
     Write-Error $_
     exit 1
