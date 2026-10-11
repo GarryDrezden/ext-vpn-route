@@ -41,12 +41,6 @@ This repo contains the Native Messaging Host `com.vpnroute.browser` (`src/native
 
 Routing is per domain, not per tab. Two tabs on the same site share one rule.
 
-Browsers, in priority order:
-
-1. Yandex Browser
-2. Google Chrome
-3. Microsoft Edge
-
 Extension format: Manifest V3.
 
 Modes:
@@ -63,6 +57,16 @@ Rule scope:
 More specific rules win. `video.google.com` can go through VPN while `google.com` stays direct.
 
 Local addresses (`localhost`, `127.0.0.0/8`, `::1`, and private IP literals) are not sent to the VPN proxy. The exact list is in `docs/pac-compiler-v1.md`.
+
+## Verified browsers
+
+The primary browser for current production acceptance is **Yandex Browser**.
+
+- **Yandex Browser** — used for production extension acceptance (Phase 3) and VPN Route Service integration (Phase 5).
+- **Google Chrome** — the early manual Phase 0A PAC/SOCKS5 spike **PASSED**, but the current **1.0.0 RC19** production chain was not separately accepted in Chrome.
+- **Microsoft Edge** — not manually tested and not part of the current acceptance matrix.
+
+The extension uses **Manifest V3** and Chromium APIs, so it is architecturally aimed at Chromium browsers; that is **not** a claim of verified manual compatibility with Chrome or Edge in RC19.
 
 ## How traffic flows
 
@@ -97,7 +101,7 @@ On current `main` locally (no live/E2E mutations):
 
 ## Status
 
-- Phase 0A, browser → PAC → SOCKS5: **PASS** in Yandex Browser and Chrome. `docs/phase0-acceptance.md`.
+- Phase 0A, browser → PAC → SOCKS5: **PASS** in Yandex Browser and Chrome *(historical manual Phase 0A spike)*. `docs/phase0-acceptance.md`.
 - Phase 0B, Native Messaging ping/pong: **PASS in Yandex Browser**, Chrome intentionally not tested. `docs/phase0b-acceptance.md`.
 - Phase 1, domain model and matcher: **PASS, automated tests**. `src/domain/browser-routing/`, contract `docs/browser-routing-contract-v1.md`.
 - Phase 2, PAC compiler: **PASS, automated tests**. `src/pac/`, spec `docs/pac-compiler-v1.md`.
