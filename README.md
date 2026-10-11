@@ -1,3 +1,5 @@
+[Русский](README.md) · [English](README.en.md)
+
 # ext-vpn-route
 
 **Расширение VPN Route для маршрутизации сайтов по доменам через локальное приложение VPN Route.**
@@ -16,7 +18,7 @@
 - даёт выбрать маршрут за пару действий;
 - применяет политику прокси через `chrome.proxy` и PAC;
 - показывает, какой маршрут сейчас действует;
-- получает правила от desktop VPN Route по Native Messaging. При сбое оставляет последний применённый PAC и не переходит на DIRECT.
+- получает правила от настольного приложения VPN Route по Native Messaging. При сбое оставляет последний применённый PAC и не переходит на DIRECT.
 
 Расширение не поднимает VPN, не меняет системную маршрутизацию и не хранит правила как источник истины.
 
@@ -26,14 +28,14 @@
 
 Их репозиторий — [Vpn-gateway](https://github.com/GarryDrezden/Vpn-gateway). Там же живут:
 
-- явный SOCKS5 на loopback;
+- явный SOCKS5 на loopback (127.0.0.1);
 - DNS для адресов, которые идут через VPN;
 - хранение правил (VPN Route Service — единственный источник истины);
 - portable-поставка.
 
-Здесь лежит Native Messaging Host `com.vpnroute.browser` (`src/native-host/`) — мост между расширением и Service без собственной бизнес-логики. Он правил не хранит и не кэширует, файлы, реестр, сеть и процессы не трогает. Состояние он читает у Service по read-only named pipe (manifest + pages); **1.0.0 RC** добавляет push-синхронизацию через `watchEvents` / `connectNative`, с периодическим alarm как запасным опросом.
+Здесь лежит Native Messaging Host `com.vpnroute.browser` (`src/native-host/`) — мост между расширением и Service без собственной бизнес-логики. Он правил не хранит и не кэширует, файлы, реестр, сеть и процессы не трогает. Состояние он читает у Service по named pipe только для чтения (manifest + pages); в **1.0.0 RC19** добавлена push-синхронизация через `watchEvents` / `connectNative`, с периодическим `alarm` как запасным опросом.
 
-**1.0.0 RC (desktop primary):** правила браузерной маршрутизации в первую очередь редактируются в desktop VPN Route (вкладка «Браузер»); popup расширения — спутник и быстрый контроль. Изменения из Service обычно подхватываются сразу по push (Native Host → `connectNative`); минутный alarm остаётся fallback.
+**1.0.0 RC19 (настольное приложение — основной редактор):** правила Browser Routing в первую очередь редактируются в настольном приложении VPN Route (вкладка «Браузер»); всплывающее окно расширения — спутник и быстрый контроль. Изменения из Service обычно подхватываются сразу по push (Native Host → `connectNative`); минутный `alarm` остаётся запасным опросом.
 
 ## Поведение V1
 
@@ -75,62 +77,73 @@ Native Messaging Host
          │
          ▼
 VPN Route Service
-  loopback SOCKS5
+  SOCKS5 на loopback
   DNS на стороне VPN
   соединение через OpenVPN
 ```
 
 Для домена «через VPN» PAC не подставляет запасной прямой путь.
 
+## Версия продукта
+
+**VPN Route 1.0.0 RC19** (штатный ID расширения `lfaekfalhkgmbfdjjlfcalanhijeaien`, Native Host `com.vpnroute.browser`, протокол **v1**). Публичный стабильный релиз **v1.0.0** ещё не выпущен. Политика версий: [docs/product-version-rc.md](docs/product-version-rc.md).
+
+## Актуальная базовая линия тестов
+
+Локально на текущей `main` (без live/E2E-мутаций):
+
+- `npm test` — **610** тестов Node
+- `npm run test:native-host` — **225** тестов xUnit (Native Host)
+
 ## Статус
 
-- Phase 0A, browser → PAC → SOCKS5: **PASS** в Yandex Browser и Chrome. `docs/phase0-acceptance.md`.
-- Phase 0B, Native Messaging ping/pong: **PASS в Yandex Browser**, Chrome намеренно не тестировался. `docs/phase0b-acceptance.md`.
-- Phase 1, доменная модель и matcher: **PASS, автоматические тесты**. `src/domain/browser-routing/`, контракт `docs/browser-routing-contract-v1.md`.
-- Phase 2, PAC compiler: **PASS, автоматические тесты**. `src/pac/`, описание `docs/pac-compiler-v1.md`.
-- Phase 3, production MV3 extension из фиксированного состояния: **FULL PASS в Yandex Browser**, включая PAC 382 KB и read-back `data_match`. `src/extension/`, `docs/phase3-extension-runtime.md`, результаты `docs/phase3-acceptance.md`.
-- Phase 4, production native state transport (extension → `com.vpnroute.browser` → интерфейс клиента Service): **PASS, автоматические тесты**. `docs/phase4-native-state-transport.md`.
-- Phase 5, интеграция с VPN Route Service (host → `\\.\pipe\SelectiveVpnRouter.BrowserRouting` → authoritative state, постранично, generation + revision): **FULL PASS** — автоматические тесты, E2E 10k rules, Yandex Browser с production host и реальной службой. `docs/phase5-service-integration.md`, `docs/phase5-acceptance.md`, протоколы `docs/native-messaging-protocol-v1.md` и `docs/service-ipc-browser-routing-v1.md`.
-- **Slice 8 (Browser Integration Port v1) — ACCEPTED:** Integration API v1, explicit loopback SOCKS5 browser proxy, VPN-bound session DNS (OpenVPN PUSH), fail-closed PAC (`SOCKS5 127.0.0.1:0` без implicit DIRECT), heartbeat/stale observability, dynamic endpoint recovery через MV3 `chrome.alarms` (1 min), real Yandex acceptance. Baseline: **497** Node tests, **210** Native Host tests. Dev-only fail-closed browser fixture: `npm run build:slice8-failclosed-fixture` → `artifacts/slice8-failclosed-fixture`.
-- **Slice 9 (Browser Routing writes + Rules UI) — ACCEPTED / COMPLETE**
-  - **9A — DONE** (vpn-gateway `42246df`, deployed): Service write API `upsertRule` / `deleteRule` / `resetRules`, capability `browserRoutingWrite`.
-  - **9B — DONE** (`220d5a6`, deployed): Native Host write bridge + extension writer (`browser-routing-writer.js`, `browser-routing-write-contract.js`).
-  - **9C — DONE** (this repo, extension reloaded): popup Rules UI (list ↔ editor, diagnostics secondary), `chrome.storage.session` draft for in-progress forms. No new Service/Native Host methods.
-  - **Live acceptance (manual):** create, edit, enable/disable toggle, delete with confirm, post-write authoritative sync + PAC (fail-closed when VPN disconnected), session draft survives popup close/reopen.
-  - **Automated only (not forced live):** `resetRules`, `revision_conflict`, ambiguous transport failure, validation_failed, capability read-only/absent, unavailable snapshot, mutation serialization, `expectedRevision` propagation.
-  - **Test baseline:** **552** Node tests, **219** Native Host tests.
-- **Slice 10A — developer install/update orchestrator — ACCEPTED / COMPLETE** (vpn-gateway): `scripts\install-vpn-route.ps1` builds/tests extension stack, runs `update-desktop.ps1` (**823** tests), registers `com.vpnroute.browser`, read-only integration verify (`scripts/verify-browser-integration-readonly.js`). Live acceptance: `-CheckOnly`, pre-mutation failure safety, full elevated install, manual extension reload. Windows PowerShell 5.1 parser gate: `vpn-gateway\scripts\validate-install-vpn-route-parse.ps1`. External OpenVPN is never touched.
+- Фаза 0A, браузер → PAC → SOCKS5: **ПРОЙДЕНО** в Yandex Browser и Chrome. `docs/phase0-acceptance.md`.
+- Фаза 0B, Native Messaging ping/pong: **ПРОЙДЕНО в Yandex Browser**, Chrome намеренно не тестировался. `docs/phase0b-acceptance.md`.
+- Фаза 1, доменная модель и сопоставитель: **ПРОЙДЕНО, автоматические тесты**. `src/domain/browser-routing/`, контракт `docs/browser-routing-contract-v1.md`.
+- Фаза 2, компилятор PAC: **ПРОЙДЕНО, автоматические тесты**. `src/pac/`, описание `docs/pac-compiler-v1.md`.
+- Фаза 3, штатное расширение MV3 из фиксированного состояния: **ПОЛНОСТЬЮ ПРОЙДЕНО в Yandex Browser**, включая PAC ~382 KB и обратное чтение `data_match`. `src/extension/`, `docs/phase3-extension-runtime.md`, результаты `docs/phase3-acceptance.md`.
+- Фаза 4, транспорт состояния через Native Host (расширение → `com.vpnroute.browser` → интерфейс клиента Service): **ПРОЙДЕНО, автоматические тесты**. `docs/phase4-native-state-transport.md`.
+- Фаза 5, интеграция с VPN Route Service (host → `\\.\pipe\SelectiveVpnRouter.BrowserRouting` → авторитетное состояние, постранично, generation + revision): **ПОЛНОСТЬЮ ПРОЙДЕНО** — автоматические тесты, E2E на 10 000 правил, Yandex Browser с штатным Native Host и реальной службой. `docs/phase5-service-integration.md`, `docs/phase5-acceptance.md`, протоколы `docs/native-messaging-protocol-v1.md` и `docs/service-ipc-browser-routing-v1.md`.
+- **Slice 8 (Browser Integration Port v1) — ПРИНЯТО:** Integration API v1, явный SOCKS5 на loopback для браузера, DNS сессии VPN (OpenVPN PUSH), fail-closed PAC (`SOCKS5 127.0.0.1:0` без неявного DIRECT), наблюдаемость heartbeat/устаревания, восстановление конечной точки через MV3 `chrome.alarms` (1 мин), приёмка в реальном Yandex Browser. *На момент приёмки Slice 8:* **497** тестов Node, **210** тестов Native Host. Fixture fail-closed только для разработки: `npm run build:slice8-failclosed-fixture` → `artifacts/slice8-failclosed-fixture`.
+- **Slice 9 (запись Browser Routing + UI правил) — ПРИНЯТО / ЗАВЕРШЕНО**
+  - **9A — ГОТОВО** (vpn-gateway `42246df`, развёрнуто): API записи Service: `upsertRule` / `deleteRule` / `resetRules`, capability `browserRoutingWrite`.
+  - **9B — ГОТОВО** (`220d5a6`, развёрнуто): мост записи Native Host + модуль записи расширения (`browser-routing-writer.js`, `browser-routing-write-contract.js`).
+  - **9C — ГОТОВО** (этот репозиторий, расширение перезагружено): UI правил во всплывающем окне (список ↔ редактор, диагностика вторична), черновик `chrome.storage.session` для незавершённых форм. Новых методов Service/Native Host нет.
+  - **Ручная живая приёмка:** создание, редактирование, переключатель вкл/выкл, удаление с подтверждением, авторитетная синхронизация и PAC после записи (fail-closed при отключённом VPN), черновик сессии переживает закрытие/открытие всплывающего окна.
+  - **Только автоматические тесты (живая приёмка не обязательна):** `resetRules`, `revision_conflict`, неоднозначный сбой транспорта, `validation_failed`, capability `read-only`/`absent`, недоступный снимок состояния, сериализация мутаций, распространение `expectedRevision`.
+  - *Историческая базовая линия на момент приёмки Slice 9:* **552** теста Node, **219** тестов Native Host.
+- **Slice 10A — оркестратор установки/обновления для разработчика — ПРИНЯТО / ЗАВЕРШЕНО** (vpn-gateway): `scripts\install-vpn-route.ps1` собирает и тестирует стек расширения, запускает `update-desktop.ps1`, регистрирует `com.vpnroute.browser`, проверка интеграции только чтения (`scripts/verify-browser-integration-readonly.js`). Ручная приёмка: `-CheckOnly`, безопасность сбоя до мутаций, полная установка с повышением прав, ручная перезагрузка расширения. Проверка парсера Windows PowerShell 5.1: `vpn-gateway\scripts\validate-install-vpn-route-parse.ps1`. Внешний OpenVPN не затрагивается. *На момент приёмки Slice 10A:* **823** теста vpn-gateway через `update-desktop.ps1`.
 
-Временный код feasibility-фазы лежит в `spike/` и в продукт не переносится.
+Временный код исследовательской фазы лежит в `spike/` и в продукт не переносится.
 
-**Canonical developer install/update** (elevated PowerShell from vpn-gateway repo):
+**Каноническая установка/обновление для разработчика** (повышенный PowerShell из репозитория vpn-gateway):
 
 ```powershell
 cd ..\vpn-gateway
 powershell -ExecutionPolicy Bypass -File scripts\install-vpn-route.ps1
 ```
 
-Read-only audit (no builds, no registry/Service changes, no BrowserRouting writes): `-CheckOnly`. Close VPN Route GUI before a full update. Extension repo override: `-ExtensionRepoPath` or `EXT_VPN_ROUTE_ROOT`.
+Аудит только чтения (без сборок, без изменений реестра/Service, без записей BrowserRouting): `-CheckOnly`. Закройте GUI VPN Route перед полным обновлением. Переопределение репозитория расширения: `-ExtensionRepoPath` или `EXT_VPN_ROUTE_ROOT`.
 
-After a successful run, reload the extension at `browser://extensions` or **Load unpacked** from `dist\extension` (production ID `lfaekfalhkgmbfdjjlfcalanhijeaien`).
+После успешного запуска перезагрузите расширение на `browser://extensions` или **Загрузить распакованное** из `dist\extension` (штатный ID `lfaekfalhkgmbfdjjlfcalanhijeaien`).
 
 ```text
 npm test                          # Node: domain, PAC, extension, integration
 npm run test:native-host          # xUnit: production native host
 npm run test:e2e                  # Service test host → pipe → host exe → extension, 10000 правил
 node scripts/check-live-service.js  # read-only: host exe → установленная служба
-npm run build:extension           # dist/extension, Fixture (по умолчанию)
-npm run build:extension:native    # dist/extension, Native: состояние от native host
-npm run build:extension:large     # dev-only: ~10000 правил
-npm run build:native-host         # dist/native-host/SelectiveVpnRouter.NativeHost.exe + smoke
+npm run build:extension           # dist/extension, режим Fixture (по умолчанию)
+npm run build:extension:native    # dist/extension, Native: состояние от Native Host
+npm run build:extension:large     # только для разработки: ~10000 правил
+npm run build:native-host         # dist/native-host/SelectiveVpnRouter.NativeHost.exe + дымовой прогон
 npm run measure:pac
 ```
 
-Checkout Vpn-gateway ищется рядом, в `..\vpn-gateway`, или по `VPN_GATEWAY_ROOT`:
+Репозиторий Vpn-gateway ищется рядом, в `..\vpn-gateway`, или по `VPN_GATEWAY_ROOT`:
 
-- `test:e2e` без него падает: он собирает оттуда Service test host;
+- `test:e2e` без него падает: оттуда собирается тестовый хост Service;
 - межрепозиторные проверки в `npm test` без него пропускаются.
 
 Регистрация host — только HKCU, без UAC: `scripts\native-host\register.ps1`, `status.ps1`, `unregister.ps1`.
 
-JS-тесты идут на встроенном `node --test`, без зависимостей. Сгенерированный PAC исполняется в изолированном `node:vm` и сверяется с matcher Phase 1.
+JS-тесты идут на встроенном `node --test`, без зависимостей. Сгенерированный PAC исполняется в изолированном `node:vm` и сверяется с сопоставителем фазы 1.
