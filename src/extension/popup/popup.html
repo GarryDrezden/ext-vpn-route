@@ -7,9 +7,40 @@
 </head>
 <body class="view-list">
   <header class="app-header">
-    <h1>VPN Route</h1>
-    <p class="subtitle">Browser Routing</p>
+    <img class="app-brand-icon" src="../assets/icons/icon-32.png" alt="" width="32" height="32">
+    <div class="app-header-text">
+      <div class="app-header-title-row">
+        <h1>VPN Route</h1>
+        <span id="app-version" class="app-version"></span>
+      </div>
+      <p class="subtitle">Маршрутизация браузера</p>
+    </div>
   </header>
+
+  <section id="health-summary" class="health-summary" aria-live="polite">
+    <ul class="health-grid">
+      <li class="health-item">
+        <span class="health-label">Служба</span>
+        <span id="health-service" class="health-value">—</span>
+      </li>
+      <li class="health-item">
+        <span class="health-label">VPN-маршрут</span>
+        <span id="health-vpn-route" class="health-value">—</span>
+      </li>
+      <li class="health-item">
+        <span class="health-label">Proxy браузера</span>
+        <span id="health-browser-proxy" class="health-value">—</span>
+      </li>
+      <li class="health-item">
+        <span class="health-label">Синхронизация</span>
+        <span id="health-sync" class="health-value">—</span>
+      </li>
+      <li class="health-item health-item-wide">
+        <span class="health-label">Защита маршрута</span>
+        <span id="health-protection" class="health-value">—</span>
+      </li>
+    </ul>
+  </section>
 
   <main id="rules-root" class="rules-root">
     <p id="rules-status-message" class="rules-message" hidden></p>

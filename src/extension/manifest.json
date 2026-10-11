@@ -10,8 +10,20 @@
     "service_worker": "extension/background.js",
     "type": "module"
   },
+  "icons": {
+    "16": "extension/assets/icons/icon-16.png",
+    "32": "extension/assets/icons/icon-32.png",
+    "48": "extension/assets/icons/icon-48.png",
+    "128": "extension/assets/icons/icon-128.png"
+  },
   "action": {
     "default_title": "VPN Route",
-    "default_popup": "extension/popup/popup.html"
+    "default_popup": "extension/popup/popup.html",
+    "default_icon": {
+      "16": "extension/assets/icons/icon-16.png",
+      "32": "extension/assets/icons/icon-32.png",
+      "48": "extension/assets/icons/icon-48.png",
+      "128": "extension/assets/icons/icon-128.png"
+    }
   }
 }

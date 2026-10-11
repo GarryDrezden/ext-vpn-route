@@ -8,6 +8,13 @@ const POPUP_HTML = path.join(ROOT, "src/extension/popup/popup.html");
 const POPUP_CSS = path.join(ROOT, "src/extension/popup/popup.css");
 const RULES_UI = path.join(ROOT, "src/extension/popup/rules-ui.js");
 
+test("popup header uses Russian browser routing subtitle", () => {
+  const html = readFileSync(POPUP_HTML, "utf8");
+  assert.match(html, /Маршрутизация браузера/);
+  assert.match(html, /id="app-version"/);
+  assert.match(html, /id="health-summary"/);
+});
+
 test("rules popup uses list/editor views without rule dialog", () => {
   const html = readFileSync(POPUP_HTML, "utf8");
   assert.match(html, /id="rules-list-view"/);

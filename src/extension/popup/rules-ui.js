@@ -236,17 +236,9 @@ export function createRulesUi(deps) {
     const main = document.createElement("div");
     main.className = "rule-card-main";
 
-    const head = document.createElement("div");
-    head.className = "rule-card-head";
-    head.appendChild(textEl("span", rule.name, "rule-card-name"));
-    const badges = document.createElement("div");
-    badges.className = "rule-badges";
-    badges.appendChild(textEl("span", labelRouteMode(rule.routeMode), routeBadgeClass(rule.routeMode)));
-    badges.appendChild(textEl("span", matchBadgeLabel(rule.matchType), "pill pill-match"));
-    if (!rule.enabled) badges.appendChild(textEl("span", "Выключено", "pill pill-off"));
-    head.appendChild(badges);
-    main.appendChild(head);
-    main.appendChild(textEl("div", formatRuleHostsLabel(rule), "rule-card-host"));
+    const top = document.createElement("div");
+    top.className = "rule-card-top";
+    top.appendChild(textEl("span", rule.name, "rule-card-name"));
 
     const actions = document.createElement("div");
     actions.className = "rule-card-actions";
@@ -267,8 +259,23 @@ export function createRulesUi(deps) {
       track.className = "switch-track";
       track.setAttribute("aria-hidden", "true");
       toggleLabel.appendChild(track);
-      actions.appendChild(toggleLabel);
+      top.appendChild(toggleLabel);
+    }
 
+    main.appendChild(top);
+    main.appendChild(textEl("div", formatRuleHostsLabel(rule), "rule-card-host"));
+
+    const meta = document.createElement("div");
+    meta.className = "rule-card-meta";
+    const badges = document.createElement("div");
+    badges.className = "rule-badges";
+    badges.appendChild(textEl("span", labelRouteMode(rule.routeMode), routeBadgeClass(rule.routeMode)));
+    badges.appendChild(textEl("span", matchBadgeLabel(rule.matchType), "pill pill-match"));
+    if (!rule.enabled) badges.appendChild(textEl("span", "Выключено", "pill pill-off"));
+    meta.appendChild(badges);
+    main.appendChild(meta);
+
+    if (panel.writable) {
       actions.appendChild(iconButton("✎", "btn-icon btn-quiet", "Изменить"));
       actions.lastChild.addEventListener("click", () => { void beginEditRule(rule); });
 

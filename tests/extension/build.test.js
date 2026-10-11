@@ -25,6 +25,8 @@ const EXPECTED_FILES = [
   "domain/browser-routing/constants.js", "domain/browser-routing/host.js", "domain/browser-routing/index.js",
   "domain/browser-routing/issues.js", "domain/browser-routing/matcher.js", "domain/browser-routing/rule.js",
   "domain/browser-routing/state.js",
+  "extension/assets/icons/icon-128.png", "extension/assets/icons/icon-16.png",
+  "extension/assets/icons/icon-32.png", "extension/assets/icons/icon-48.png",
   "extension/background.js",
   "extension/popup/popup.css", "extension/popup/popup.html", "extension/popup/popup.js",
   "extension/popup/rule-editor-draft.js", "extension/popup/rule-form-helpers.js",
@@ -79,6 +81,18 @@ describe("extension build output", () => {
     assert.deepEqual(manifest.permissions, ["proxy", "storage", "alarms"]);
     assert.deepEqual(manifest.background, { service_worker: "extension/background.js", type: "module" });
     assert.equal(manifest.action.default_popup, "extension/popup/popup.html");
+    const icons = {
+      16: "extension/assets/icons/icon-16.png",
+      32: "extension/assets/icons/icon-32.png",
+      48: "extension/assets/icons/icon-48.png",
+      128: "extension/assets/icons/icon-128.png"
+    };
+    assert.deepEqual(manifest.icons, icons);
+    assert.deepEqual(manifest.action.default_icon, manifest.icons);
+    for (const size of ["16", "32", "48", "128"]) {
+      const rel = manifest.icons[size];
+      assert.ok(normal.files.includes(rel), rel);
+    }
     for (const key of ["host_permissions", "content_scripts", "optional_permissions", "externally_connectable"]) {
       assert.equal(key in manifest, false, key);
     }

@@ -71,7 +71,7 @@ const SOURCES = Object.freeze({
     { from: "src/domain/browser-routing", to: "domain/browser-routing" }
   ])
 });
-const ALLOWED_EXTENSIONS = Object.freeze([".js", ".json", ".html", ".css"]);
+const ALLOWED_EXTENSIONS = Object.freeze([".js", ".json", ".html", ".css", ".png"]);
 const PERMISSIONS = Object.freeze({
   fixture: Object.freeze(["proxy", "storage", "alarms"]),
   native: Object.freeze(["nativeMessaging", "proxy", "storage", "alarms"])

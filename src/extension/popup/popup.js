@@ -16,6 +16,79 @@ function toneFor(status) {
   return "bad";
 }
 
+function showHealth(id, value, tone) {
+  const element = byId(id);
+  element.textContent = value === null || value === undefined || value === "" ? "—" : String(value);
+  element.className = "health-value" + (tone ? " " + tone : "");
+}
+
+function labelProtection(protection) {
+  if (!protection) return "—";
+  if (protection === "LAST_KNOWN_GOOD") return "Last-known-good";
+  if (protection === "CURRENT") return "Актуальная конфигурация";
+  if (protection === "NOT_PROTECTED") return "Не защищено";
+  return String(protection);
+}
+
+function renderHealthSummary(response) {
+  if (!response || response.ok !== true) {
+    showHealth("health-service", "Нет данных от расширения", "bad");
+    showHealth("health-vpn-route", "—", "warn");
+    showHealth("health-browser-proxy", "—", "warn");
+    showHealth("health-sync", "—", "warn");
+    showHealth("health-protection", "—", "warn");
+    return;
+  }
+
+  showHealth("health-protection", labelProtection(response.protection), toneFor(response.protection));
+
+  if (response.mode === "Fixture") {
+    showHealth("health-service", "Режим Fixture (локально)", "warn");
+    showHealth("health-vpn-route", "Не применимо", "warn");
+    showHealth("health-browser-proxy", "Локальный proxy", "ok");
+    showHealth("health-sync", "Без Native Host", "warn");
+    return;
+  }
+
+  const source = response.source;
+  if (!source) {
+    showHealth("health-service", "Native: нет source", "bad");
+    showHealth("health-vpn-route", "—", "warn");
+    showHealth("health-browser-proxy", "—", "warn");
+    showHealth("health-sync", "—", "warn");
+    return;
+  }
+
+  if (source.service === "AVAILABLE") showHealth("health-service", "Служба доступна", "ok");
+  else if (source.service === "UNAVAILABLE") showHealth("health-service", "Служба недоступна", "bad");
+  else showHealth("health-service", source.service || "—", toneFor(source.service));
+
+  const egress = source.integration && source.integration.vpnEgress;
+  if (egress && egress.status === "Ready") showHealth("health-vpn-route", "VPN-маршрут готов", "ok");
+  else if (egress && egress.status) showHealth("health-vpn-route", "VPN-маршрут не готов", "warn");
+  else showHealth("health-vpn-route", "Нет данных VPN egress", "warn");
+
+  if (source.browserProxy === "READY") showHealth("health-browser-proxy", "Proxy готов", "ok");
+  else if (source.browserProxy) showHealth("health-browser-proxy", "Proxy не готов", toneFor(source.browserProxy));
+  else showHealth("health-browser-proxy", "—", "warn");
+
+  if (source.transport === "AVAILABLE") showHealth("health-sync", "Синхронизация доступна", "ok");
+  else if (source.transport === "UNAVAILABLE") showHealth("health-sync", "Синхронизация недоступна", "bad");
+  else showHealth("health-sync", source.transport || "—", toneFor(source.transport));
+}
+
+function renderAppVersion() {
+  const el = byId("app-version");
+  if (!el) return;
+  try {
+    const manifest = chrome.runtime.getManifest();
+    el.textContent = manifest.version_name || manifest.version || "";
+    if (!el.textContent) el.hidden = true;
+  } catch {
+    el.hidden = true;
+  }
+}
+
 function renderNative(source) {
   byId("native-section").hidden = false;
   byId("reapply").textContent = "Обновить и применить";
@@ -63,6 +136,7 @@ function renderNative(source) {
 }
 
 function render(response) {
+  renderHealthSummary(response);
   if (!response || response.ok !== true) {
     show("status", "ERROR", "bad");
     show("last-error", response && response.error ? response.error : "No response from the service worker.", "bad");
@@ -172,6 +246,7 @@ async function run(command) {
 }
 
 show("extension-id", chrome.runtime.id);
+renderAppVersion();
 byId("reapply").addEventListener("click", () => run("reapply"));
 byId("clear").addEventListener("click", () => run("clear"));
 byId("refresh").addEventListener("click", () => run("status"));
