@@ -6,7 +6,7 @@
 
 Версия IPC (`version: 1`) не зависит от версии Native Messaging (`protocolVersion: 1`). Они меняются независимо.
 
-**Browser Integration Port v1** (design: `Vpn-gateway/docs/superpowers/specs/2026-10-05-browser-integration-port-v1-design.md`) расширяет `getManifest` additive-полями и optional heartbeat. Пока Service на main не прошёл slices 4–5, production manifest может содержать только Phase 5 поля (см. ниже). Клиенты обязаны оставаться совместимыми с manifest **без** новых полей.
+**Browser Integration Port v1** (design spec in the gateway repository: [browser-integration-port-v1-design.md](https://github.com/GarryDrezden/Vpn-gateway/blob/main/docs/architecture/browser-integration-port-v1-design.md)) расширяет `getManifest` additive-полями и optional heartbeat. Пока Service на main не прошёл slices 4–5, production manifest может содержать только Phase 5 поля (см. ниже). Клиенты обязаны оставаться совместимыми с manifest **без** новых полей.
 
 ## Почему отдельный endpoint
 
