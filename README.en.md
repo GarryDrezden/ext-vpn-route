@@ -33,9 +33,9 @@ Those live in [Vpn-gateway](https://github.com/GarryDrezden/Vpn-gateway):
 - rule storage (VPN Route Service is the single source of truth);
 - portable delivery.
 
-This repo contains the Native Messaging Host `com.vpnroute.browser` (`src/native-host/`) — a bridge between the extension and Service without its own business logic. It does not store or cache rules, and does not touch files, registry, network, or processes. It reads state from Service over a read-only named pipe (manifest + pages); **1.0.0 RC19** adds push sync via `watchEvents` / `connectNative`, with periodic `chrome.alarms` as fallback polling.
+This repo contains the Native Messaging Host `com.vpnroute.browser` (`src/native-host/`) — a bridge between the extension and Service without its own business logic. It does not store or cache rules, and does not touch files, registry, network, or processes. It reads state from Service over the browser-routing pipe (manifest + pages, rule writes when `browserRoutingWrite` is present); **1.0.0** adds push sync via `watchEvents` / `connectNative`, with periodic `chrome.alarms` as fallback polling.
 
-**1.0.0 RC19 (desktop is the primary editor):** Browser Routing rules are edited primarily in the VPN Route desktop app (tab «Браузер»); the extension popup is a companion and quick control surface. Changes from Service are usually picked up immediately via push (Native Host → `connectNative`); the one-minute alarm remains fallback polling.
+**1.0.0 (desktop is the primary editor):** Browser Routing rules are edited primarily in the VPN Route desktop app (tab «Браузер»); the extension popup is a companion and quick control surface. Changes from Service are usually picked up immediately via push (Native Host → `connectNative`); the one-minute alarm remains fallback polling.
 
 ## V1 behavior
 
@@ -90,13 +90,13 @@ For a “through VPN” domain, PAC does not substitute a fallback direct path.
 
 ## Product version
 
-**VPN Route 1.0.0 RC19** (extension production ID `lfaekfalhkgmbfdjjlfcalanhijeaien`, Native Host `com.vpnroute.browser`, protocol **v1**). Public stable **v1.0.0** is not shipped yet. Version policy: [docs/product-version-rc.md](docs/product-version-rc.md).
+**VPN Route 1.0.0** (extension production ID `lfaekfalhkgmbfdjjlfcalanhijeaien`, Native Host `com.vpnroute.browser`, protocol **v1**). Version policy: [docs/product-version.md](docs/product-version.md).
 
 ## Current test baseline
 
 On current `main` locally (no live/E2E mutations):
 
-- `npm test` — **610** Node tests
+- `npm test` — **611** Node tests
 - `npm run test:native-host` — **225** Native Host xUnit tests
 
 ## Status

@@ -2,8 +2,8 @@
   <PropertyGroup>
     <!-- Keep in sync with version/product-version.json (extension repo SSOT for Node + Native Host). -->
     <VpnRouteProductVersion>1.0.0</VpnRouteProductVersion>
-    <VpnRouteReleaseChannel>RC</VpnRouteReleaseChannel>
-    <VpnRouteReleaseRevision>19</VpnRouteReleaseRevision>
+    <VpnRouteReleaseChannel>stable</VpnRouteReleaseChannel>
+    <VpnRouteReleaseRevision>0</VpnRouteReleaseRevision>
     <Version>$(VpnRouteProductVersion).$(VpnRouteReleaseRevision)</Version>
     <AssemblyVersion>$(VpnRouteProductVersion).$(VpnRouteReleaseRevision)</AssemblyVersion>
     <FileVersion>$(VpnRouteProductVersion).$(VpnRouteReleaseRevision)</FileVersion>

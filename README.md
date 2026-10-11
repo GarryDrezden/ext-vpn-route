@@ -33,9 +33,9 @@
 - хранение правил (VPN Route Service — единственный источник истины);
 - portable-поставка.
 
-Здесь лежит Native Messaging Host `com.vpnroute.browser` (`src/native-host/`) — мост между расширением и Service без собственной бизнес-логики. Он правил не хранит и не кэширует, файлы, реестр, сеть и процессы не трогает. Состояние он читает у Service по named pipe только для чтения (манифест + страницы); в **1.0.0 RC19** добавлена push-синхронизация через `watchEvents` / `connectNative`, с периодическим `alarm` как запасным опросом.
+Здесь лежит Native Messaging Host `com.vpnroute.browser` (`src/native-host/`) — мост между расширением и Service без собственной бизнес-логики. Он правил не хранит и не кэширует, файлы, реестр, сеть и процессы не трогает. Состояние он читает у Service по named pipe (манифест + страницы, запись правил при capability `browserRoutingWrite`); в **1.0.0** push-синхронизация через `watchEvents` / `connectNative`, с периодическим `alarm` как запасным опросом.
 
-**1.0.0 RC19 (настольное приложение — основной редактор):** правила Browser Routing в первую очередь редактируются в настольном приложении VPN Route (вкладка «Браузер»); всплывающее окно расширения — спутник и быстрый контроль. Изменения из Service обычно подхватываются сразу по push (Native Host → `connectNative`); минутный `alarm` остаётся запасным опросом.
+**1.0.0 (настольное приложение — основной редактор):** правила Browser Routing в первую очередь редактируются в настольном приложении VPN Route (вкладка «Браузер»); всплывающее окно расширения — спутник и быстрый контроль. Изменения из Service обычно подхватываются сразу по push (Native Host → `connectNative`); минутный `alarm` остаётся запасным опросом.
 
 ## Поведение V1
 
@@ -90,13 +90,13 @@ VPN Route Service
 
 ## Версия продукта
 
-**VPN Route 1.0.0 RC19** (штатный ID расширения `lfaekfalhkgmbfdjjlfcalanhijeaien`, Native Host `com.vpnroute.browser`, протокол **v1**). Публичный стабильный релиз **v1.0.0** ещё не выпущен. Политика версий: [docs/product-version-rc.md](docs/product-version-rc.md).
+**VPN Route 1.0.0** (штатный ID расширения `lfaekfalhkgmbfdjjlfcalanhijeaien`, Native Host `com.vpnroute.browser`, протокол **v1**). Политика версий: [docs/product-version.md](docs/product-version.md).
 
 ## Актуальная базовая линия тестов
 
 Локально на текущей `main` (без живых/E2E-мутаций):
 
-- `npm test` — **610** тестов Node
+- `npm test` — **611** тестов Node
 - `npm run test:native-host` — **225** тестов xUnit (Native Host)
 
 ## Статус

@@ -6,7 +6,7 @@
 
 Версия IPC (`version: 1`) не зависит от версии Native Messaging (`protocolVersion: 1`). Они меняются независимо.
 
-**Browser Integration Port v1** (design spec in the gateway repository: [browser-integration-port-v1-design.md](https://github.com/GarryDrezden/Vpn-gateway/blob/main/docs/architecture/browser-integration-port-v1-design.md)) расширяет `getManifest` additive-полями и optional heartbeat. Пока Service на main не прошёл slices 4–5, production manifest может содержать только Phase 5 поля (см. ниже). Клиенты обязаны оставаться совместимыми с manifest **без** новых полей.
+**Browser Integration Port v1** (design spec in the gateway repository: [browser-integration-port-v1-design.md](https://github.com/GarryDrezden/Vpn-gateway/blob/main/docs/architecture/browser-integration-port-v1-design.md)) расширяет `getManifest` additive-полями, `vpnEgress`, explicit loopback SOCKS и optional heartbeat; write-методы — при capability `browserRoutingWrite` (Slice 9). Клиенты обязаны оставаться **обратно совместимыми** с урезанным manifest (только Phase 5 поля), если интеграционные поля отсутствуют.
 
 ## Почему отдельный endpoint
 
@@ -106,18 +106,18 @@ Int32 LE длина (1..max) + UTF-8 JSON
   "defaultRoute": "Direct",
   "ruleCount": 0,
   "pageBudgetBytes": 520192,
-  "browserProxy": { "status": "Unavailable", "endpoint": null }
+  "browserProxy": { "status": "Ready", "endpoint": { "host": "127.0.0.1", "port": 12345 } }
 }
 ```
 
 - `stateGeneration` — UUID в нижнем регистре (`D`-формат). Создаётся Service, хранится вместе с state, переживает рестарт.
 - `ruleCount` — `0..10000`.
 - `pageBudgetBytes` = 512 KiB − 4 KiB резерва на конверт.
-- `browserProxy`:
-  - `{ "status": "Ready", "endpoint": { "host": "127.x.y.z", "port": 1..65535 } }`, если Service поднял explicit browser proxy;
-  - иначе `{ "status": "Unavailable", "endpoint": null }`.
+- `browserProxy` (текущий production Service с Browser Integration Port v1):
+  - `{ "status": "Ready", "endpoint": { "host": "127.x.y.z", "port": 1..65535 } }`, когда explicit browser SOCKS на loopback поднят;
+  - `{ "status": "Unavailable", "endpoint": null }`, если listener недоступен (ошибка/остановка), не «Phase 5 по умолчанию».
 
-  В Phase 5 explicit browser proxy в Service нет, production всегда отвечает `Unavailable`. `Ready` появится после Browser Integration Port v1 runtime (vpn-gateway slices 4–5).
+  *Исторически (Phase 5 до slices 4–5):* explicit proxy отсутствовал, manifest содержал только базовые поля и `browserProxy: Unavailable`.
 
 ### Integration API v1 (additive manifest, major-only)
 
